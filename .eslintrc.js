@@ -5,14 +5,14 @@ module.exports = {
     extends: [
         'eslint:recommended',
         'plugin:@typescript-eslint/eslint-recommended',
-        'plugin:@typescript-eslint/recommended'
+        'plugin:@typescript-eslint/recommended',
     ],
     env: {
-        node: true
+        node: true,
     },
     rules: {
         'prettier/prettier': 'error',
         '@typescript-eslint/no-var-requires': 'off',
-        '@typescript-eslint/ban-ts-comment': 'off'
-    }
+        '@typescript-eslint/ban-ts-comment': 'off',
+    },
 };

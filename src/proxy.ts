@@ -23,45 +23,80 @@ type RaceSocket = Pick<Socket, 'destroy'> & {
 
 /**
  * 通过比较第一个包的响应时间选取最快的路线
- * TODO: 比对多个包(可设置)的结果来决定用哪个连接(现有问题: github 未走代理)
+ * TODO: 国外一些慢网站首个响应包较快,需要用其他方法辨别. 当前通过proxyCostBonus提高走代理的概率, 之后需要做增强的统计和识别
  * @param connectData 当请求的方法是CONNECT时需传递
  */
 function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
     const dataCache: Buffer[] = [];
     let msock: Socket | null = null;
-    const connectedSocks: Socket[] = [];
+    let connectedSocks: Socket[] = [];
     const cbMap: { [index: string]: (...args: Buffer[]) => void } = {};
+    let raceRecvData: Buffer | null = null;
+    let minRacingCost = Infinity;
+    let minRecvSock: Socket | null = null;
+    let minCancelCb: (() => void) | null = null;
+    let judgeTimeOut = -Infinity;
+    const judgeWin = (isTimeout = true) => {
+        const win = isTimeout || socks.filter((v) => v).length === 1;
+        if (win && minRecvSock) {
+            msock = minRecvSock;
+            minRecvSock = null;
+            minCancelCb = null;
+            socks.forEach((v) => v !== msock && v?.destroy());
+            ['data', 'end', 'error'].forEach((ev) =>
+                msock?.on(ev, (...args) => cbMap[ev]?.(...args)),
+            );
+            if (raceRecvData) cbMap['data']?.(raceRecvData);
+        }
+        return win;
+    };
     const socks: (Socket | null)[] = dests.map((v, i) => {
         let blockDataCount = 0;
+        let raceStartAt = -Infinity;
         const sock = net.connect(v.port, v.ip, () => {
             if (connectData && !v.notProxy) {
                 sock.write(connectData);
                 blockDataCount++;
-            } else dataCache.forEach((d) => sock.write(d));
+            } else {
+                dataCache.forEach((d) => sock.write(d));
+                connectedSocks.push(sock);
+                raceStartAt = Date.now();
+            }
+        });
+        const fail = () => {
+            sock.destroy();
+            socks[i] = null;
+            connectedSocks = connectedSocks.filter((v) => v !== sock);
+            if (!socks.find((v) => v)) cbMap['error']?.();
+        };
+        sock.on('end', () => {
+            if (sock === msock) cbMap['end']?.();
         });
         sock.on('data', (data) => {
             if (blockDataCount) {
                 // TODO: 解析代理返回的错误
                 blockDataCount--;
-                if (blockDataCount <= 0) dataCache.forEach((d) => sock.write(d));
+                if (blockDataCount <= 0) {
+                    dataCache.forEach((d) => sock.write(d));
+                    connectedSocks.push(sock);
+                    raceStartAt = Date.now();
+                }
                 return;
             }
-            if (msock) {
-                return;
+            if (msock) return;
+            let cost = Date.now() - raceStartAt;
+            if (v.notProxy && dests.find((v) => !!v.notProxy)) cost += Settings.proxyCostBonus;
+            if (cost >= minRacingCost) fail();
+            else {
+                minRacingCost = cost;
+                minRecvSock = sock;
+                raceRecvData = data;
+                minCancelCb?.();
+                minCancelCb = fail;
+                if (!judgeWin(false) && judgeTimeOut === -Infinity)
+                    judgeTimeOut = Number(setTimeout(judgeWin, cost));
             }
-            socks.forEach((v, index) => i !== index && v?.destroy());
-            cbMap['connected']?.();
-            ['data', 'end', 'error'].forEach((ev) =>
-                sock.on(ev, (...args) => cbMap[ev]?.(...args))
-            );
-            msock = sock;
-            cbMap['data']?.(data);
         });
-        const fail = () => {
-            sock.destroy();
-            socks[i] = null;
-            if (!socks.find((v) => v)) cbMap['error']?.();
-        };
         sock.on('error', fail);
         sock.setTimeout(Settings.socketTimeout, fail);
         return sock;
@@ -85,7 +120,7 @@ function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
         },
         on(ev: string, cb: (data: Buffer) => void) {
             cbMap[ev] = cb;
-        }
+        },
     };
 }
 
@@ -160,7 +195,7 @@ export function startProxy(): void {
                     sockConnect(
                         sock,
                         [...Settings.proxys, { ip: ips[0], port, notProxy: true }],
-                        data
+                        data,
                     );
                 });
         });
