@@ -31,7 +31,7 @@ function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
     let msock: Socket | null = null;
     let connectedSocks: Socket[] = [];
     const cbMap: { [index: string]: (...args: Buffer[]) => void } = {};
-    let raceRecvData: Buffer | null = null;
+    const raceRecvDataMap = new Map<Socket, Buffer[]>();
     let minRacingCost = Infinity;
     let minRecvSock: Socket | null = null;
     let minCancelCb: (() => void) | null = null;
@@ -46,7 +46,7 @@ function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
             ['data', 'end', 'error'].forEach((ev) =>
                 msock?.on(ev, (...args) => cbMap[ev]?.(...args)),
             );
-            if (raceRecvData) cbMap['data']?.(raceRecvData);
+            raceRecvDataMap.get(msock)?.forEach((d) => cbMap['data']?.(d));
         }
         return win;
     };
@@ -64,6 +64,13 @@ function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
             }
         });
         const fail = () => {
+            if (minRecvSock === sock) {
+                clearTimeout(judgeTimeOut);
+                judgeTimeOut = -Infinity;
+                minCancelCb = null;
+                minRecvSock = null;
+                minRacingCost = Infinity;
+            }
             sock.destroy();
             socks[i] = null;
             connectedSocks = connectedSocks.filter((v) => v !== sock);
@@ -84,13 +91,18 @@ function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
                 return;
             }
             if (msock) return;
+            const mCache = raceRecvDataMap.get(sock);
+            if (mCache) {
+                mCache.push(data);
+                return;
+            }
             let cost = Date.now() - raceStartAt;
             if (v.notProxy && dests.find((v) => !!v.notProxy)) cost += Settings.proxyCostBonus;
             if (cost >= minRacingCost) fail();
             else {
                 minRacingCost = cost;
                 minRecvSock = sock;
-                raceRecvData = data;
+                raceRecvDataMap.set(sock, [data]);
                 minCancelCb?.();
                 minCancelCb = fail;
                 if (!judgeWin(false) && judgeTimeOut === -Infinity)
