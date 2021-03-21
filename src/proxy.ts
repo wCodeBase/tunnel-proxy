@@ -165,6 +165,6 @@ export function startProxy(): void {
                 });
         });
     });
-    server.listen(Settings.port);
-    console.log('Proxy listening on ' + Settings.port);
+    server.listen(Settings.port, Settings.host);
+    console.log(`Proxy listening on ${Settings.host}:${Settings.port}`);
 }

@@ -9,6 +9,7 @@ const program = new Command();
 program
     .version('0.0.6')
     .option('-p, --port <port number>', 'port to listen on')
+    .option('-h, --host <host>', 'host to bind, default 0.0.0.0')
     .option('-c, --config <config file path>', 'use a config file')
     .parse(process.argv);
 
@@ -24,6 +25,8 @@ if (opts.port) {
     if (Number.isInteger(port)) Settings.port = port;
     else existWithError('Illegal port number');
 }
+
+if (opts.host) Settings.host = opts.host;
 
 if (opts.config) {
     const configPath = path.resolve(opts.config);
