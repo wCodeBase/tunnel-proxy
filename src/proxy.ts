@@ -181,7 +181,18 @@ export function startProxy(): void {
         };
     })();
 
+    const sockIpHostSet = new Set<string>();
+
     const server = new net.Server((sock) => {
+        const strIpHost = `${sock.remoteAddress}:${sock.remotePort}`;
+        if (sockIpHostSet.has(strIpHost)) {
+            sock.destroy();
+            return;
+        }
+        sockIpHostSet.add(strIpHost);
+        sock.on('end', () => {
+            sockIpHostSet.delete(strIpHost);
+        });
         sock.once('data', (data) => {
             const url = parseHttpUrl(data);
             if (!url) {
@@ -196,20 +207,26 @@ export function startProxy(): void {
             const domain = domainAndPort[0];
             const target = getDomainProxy(domain);
             if (target) sockConnect(sock, [target], data);
-            else
-                resolve(domain, (err, ips) => {
-                    if (err || !ips.length) {
-                        // TODO: 返回错误信息, 可开关
-                        sock.destroy();
-                        return;
-                    }
+            else {
+                const doConnect = (ips: string[]) => {
                     const port = domainAndPort.length > 1 ? Number(domainAndPort[1]) : 80;
                     sockConnect(
                         sock,
                         [...Settings.proxys, { ip: ips[0], port, notProxy: true }],
                         data,
                     );
-                });
+                };
+                if (net.isIP(domain)) doConnect([domain]);
+                else
+                    resolve(domain, (err, ips) => {
+                        if (err || !ips.length) {
+                            // TODO: 返回错误信息, 可开关
+                            sock.destroy();
+                            return;
+                        }
+                        doConnect(ips);
+                    });
+            }
         });
     });
     server.listen(Settings.port, Settings.host);
