@@ -24,7 +24,10 @@ Use 'proxys' option to set forward proxies.
     {
       ip: "127.0.0.1",
       port: 8888,
-      fixedDomains: [/.*github.com/, 'www.google.com']
+      fixedDomains: [/.*github.com/, 'www.google.com'],
+      proxyCostBonus: 30,
+      maxPkgLossPct: 50,
+      maxGoodLatency: 50,
     },
   ],
   port: 8000

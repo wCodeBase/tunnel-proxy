@@ -9,5 +9,7 @@ export const Settings = {
     proxys: [] as Target[],
     port: 8008,
     host: '0.0.0.0',
-    proxyCostBonus: 600,
+    proxyCostBonus: 30,
+    maxPkgLossPct: 50,
+    maxGoodLatency: 50,
 };

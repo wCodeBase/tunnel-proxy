@@ -1,5 +1,5 @@
+import { diagnoseDomain } from './stats/channelDiagnostic';
 import net, { Socket } from 'net';
-import { resolve } from 'dns';
 import { Settings, Target } from './common/setting';
 
 const CODE_CONNECT = 'CONNECT';
@@ -20,10 +20,10 @@ type RaceSocket = Pick<Socket, 'destroy'> & {
     on: typeof RaceSocketOn;
     write: (data: Buffer) => void;
 };
+const closedSockSet = new Set();
 
 /**
  * 通过比较第一个包的响应时间选取最快的路线
- * TODO: 国外一些慢网站首个响应包较快,需要用其他方法辨别. 当前通过proxyCostBonus提高走代理的概率, 之后需要做增强的统计和识别
  * @param connectData 当请求的方法是CONNECT时需传递
  */
 function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
@@ -77,6 +77,7 @@ function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
             if (!socks.find((v) => v)) cbMap['error']?.();
         };
         sock.on('end', () => {
+            closedSockSet.add(sock);
             if (sock === msock) cbMap['end']?.();
         });
         sock.on('data', (data) => {
@@ -193,7 +194,7 @@ export function startProxy(): void {
         sock.on('end', () => {
             sockIpHostSet.delete(strIpHost);
         });
-        sock.once('data', (data) => {
+        sock.once('data', async (data) => {
             const url = parseHttpUrl(data);
             if (!url) {
                 // TODO: 返回错误信息, 可开关
@@ -208,24 +209,8 @@ export function startProxy(): void {
             const target = getDomainProxy(domain);
             if (target) sockConnect(sock, [target], data);
             else {
-                const doConnect = (ips: string[]) => {
-                    const port = domainAndPort.length > 1 ? Number(domainAndPort[1]) : 80;
-                    sockConnect(
-                        sock,
-                        [...Settings.proxys, { ip: ips[0], port, notProxy: true }],
-                        data,
-                    );
-                };
-                if (net.isIP(domain)) doConnect([domain]);
-                else
-                    resolve(domain, (err, ips) => {
-                        if (err || !ips.length) {
-                            // TODO: 返回错误信息, 可开关
-                            sock.destroy();
-                            return;
-                        }
-                        doConnect(ips);
-                    });
+                const port = domainAndPort.length > 1 ? Number(domainAndPort[1]) : 80;
+                sockConnect(sock, await diagnoseDomain(domain, port), data);
             }
         });
     });

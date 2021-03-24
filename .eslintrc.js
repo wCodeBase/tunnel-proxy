@@ -14,5 +14,6 @@ module.exports = {
         'prettier/prettier': 'error',
         '@typescript-eslint/no-var-requires': 'off',
         '@typescript-eslint/ban-ts-comment': 'off',
+        '@typescript-eslint/explicit-module-boundary-types': 'off',
     },
 };
