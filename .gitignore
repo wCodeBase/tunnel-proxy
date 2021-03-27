@@ -106,3 +106,5 @@ dist
 config.js
 
 yarn.lock
+
+cache.bin

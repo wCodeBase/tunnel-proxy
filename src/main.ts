@@ -7,10 +7,14 @@ import { startProxy } from './proxy';
 const program = new Command();
 
 program
-    .version('0.0.10')
-    .option('-p, --port <port number>', 'port to listen on')
-    .option('-h, --host <host>', 'host to bind, default 0.0.0.0')
+    .version('0.0.13')
+    .option('-p, --port <port number>', 'Port to listen on')
+    .option('-h, --host <host>', 'Host to bind, default 0.0.0.0')
     .option('-c, --config <config file path>', 'use a config file')
+    .option(
+        '-C, --cache <cache file path>',
+        'Use a cache file for statistics saving and restoring, ./tunnel-proxy-cache.bin by default',
+    )
     .parse(process.argv);
 
 const existWithError = (error: string) => {
@@ -27,6 +31,8 @@ if (opts.port) {
 }
 
 if (opts.host) Settings.host = opts.host;
+
+if (opts.cache) Settings.cacheFile = opts.cache;
 
 if (opts.config) {
     const configPath = path.resolve(opts.config);

@@ -1,4 +1,4 @@
-import { diagnoseDomain } from './stats/channelDiagnostic';
+import { diagnoseDomain, tryRestoreCache, trySaveCache } from './stats/channelDiagnostic';
 import net, { Socket } from 'net';
 import { Settings, Target } from './common/setting';
 
@@ -161,6 +161,7 @@ function parseHttpUrl(data: Buffer) {
 }
 
 export function startProxy(): void {
+    tryRestoreCache();
     const getDomainProxy = (() => {
         const domainTargetMap = new Map<string, Target>();
         const domainProxyPairs: [string | RegExp, Target][] = [];
@@ -210,10 +211,19 @@ export function startProxy(): void {
             if (target) sockConnect(sock, [target], data);
             else {
                 const port = domainAndPort.length > 1 ? Number(domainAndPort[1]) : 80;
-                sockConnect(sock, await diagnoseDomain(domain, port), data);
+                const targets = await diagnoseDomain(domain, port);
+                sockConnect(sock, targets, data);
             }
         });
     });
     server.listen(Settings.port, Settings.host);
     console.log(`Proxy listening on ${Settings.host}:${Settings.port}`);
+    process.on('SIGINT', async () => {
+        await trySaveCache();
+        process.exit();
+    });
+    process.on('SIGTERM', async () => {
+        await trySaveCache();
+        process.exit();
+    });
 }

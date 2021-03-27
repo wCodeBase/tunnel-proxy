@@ -1,6 +1,6 @@
 {
   "name": "tunnel-proxy",
-  "version": "0.0.10",
+  "version": "0.0.13",
   "description": "A simple HTTP proxy and smart proxy relay",
   "main": "main.js",
   "bin": {
@@ -19,7 +19,9 @@
   "author": "wCodeBase",
   "license": "MIT",
   "dependencies": {
+    "@types/lodash": "^4.14.168",
     "commander": "^7.1.0",
+    "lodash": "^4.17.21",
     "ping": "^0.4.0"
   },
   "devDependencies": {

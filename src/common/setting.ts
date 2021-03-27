@@ -11,5 +11,7 @@ export const Settings = {
     host: '0.0.0.0',
     proxyCostBonus: 30,
     maxPkgLossPct: 50,
-    maxGoodLatency: 50,
+    maxGoodLatency: 150,
+    pingAsync: true,
+    cacheFile: './tunnel-proxy-cache.bin',
 };
