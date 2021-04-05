@@ -138,6 +138,7 @@ function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
 }
 
 function sockConnect(sock: Socket, targets: Target[], firstData: Buffer) {
+    if (!targets.length) sock.destroy();
     const isConnect = isConnectedMethod(firstData);
     const connectData = isConnect ? firstData : undefined;
     const destSock = raceConnect(targets, connectData);

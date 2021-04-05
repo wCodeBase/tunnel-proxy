@@ -36,3 +36,15 @@ export function unZipipData(data: Buffer): Promise<Buffer> {
         });
     });
 }
+
+export function runWithTimeout<T, V>(
+    worker: Promise<T>,
+    timeout: number,
+    timeoutValue: V,
+): Promise<T | V> {
+    if (timeout === Infinity) return worker;
+    return Promise.race([
+        worker,
+        new Promise<V>((r) => setTimeout(() => r(timeoutValue), timeout)),
+    ]);
+}

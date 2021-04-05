@@ -1,11 +1,11 @@
 import { Settings } from './../common/setting';
 import net from 'net';
-import { resolve } from 'dns';
+import { RecordWithTtl, resolve4, resolve6 } from 'dns';
 import ping from 'ping';
 import path from 'path';
 import fs from 'fs';
 import { CacheData, DomainChannelStats } from './types';
-import { parseDomain, unZipipData, zipData } from '../common/util';
+import { parseDomain, runWithTimeout, unZipipData, zipData } from '../common/util';
 import { debounce } from 'lodash';
 
 /**
@@ -38,12 +38,16 @@ export const tryRestoreCache = async () => {
                 const dataToPing = Array.from(data.domainReqCountsDec);
                 const pingTest = async () => {
                     const toPing = dataToPing
-                        .splice(0, 30)
+                        .splice(0, Settings.pingBatchCount)
                         .filter((d) => !domainStatsMap.has(d.dAndP));
                     await Promise.all(
                         toPing.map((d) => {
                             const dAndP = parseDomain(d.dAndP);
-                            return diagnoseDomain(dAndP.domain, dAndP.port, false, true);
+                            return runWithTimeout(
+                                diagnoseDomain(dAndP.domain, dAndP.port, false, true, true),
+                                3000,
+                                undefined,
+                            );
                         }),
                     );
                     if (!dataToPing.length) return;
@@ -100,36 +104,54 @@ export const diagnoseDomain = async (
     port: number,
     rediagnose = false,
     forceSync = false,
+    ignoreCount = false,
 ) => {
     const dAndP = `${domain}:${port}`;
-    const reqCount = domainReqCountMap.get(dAndP) || 0;
-    if (!reqCount) judgeToSaveCacheDebounced();
-    domainReqCountMap.set(dAndP, reqCount + 1);
+    if (!ignoreCount) {
+        const reqCount = domainReqCountMap.get(dAndP) || 0;
+        if (!reqCount) judgeToSaveCacheDebounced();
+        domainReqCountMap.set(dAndP, reqCount + 1);
+    }
     let statsList = rediagnose ? [] : domainStatsMap.get(dAndP) || [];
-    if (!statsList.length) {
-        Settings.proxys.forEach((target) => statsList.push(new DomainChannelStats(dAndP, target)));
+    if (!statsList.length || !(await verifyTtl(statsList))) {
+        Settings.proxys.forEach((target) =>
+            statsList.push(new DomainChannelStats(domain, port, dAndP, target)),
+        );
         await new Promise(async (r) => {
             const mStatsList = [...statsList];
             const ips = await resolveDomainIps(domain);
             if (ips.length) {
                 if (!forceSync && Settings.pingAsync) {
                     statsList.push(
-                        new DomainChannelStats(dAndP, { ip: ips[0], port, notProxy: true }),
+                        new DomainChannelStats(
+                            domain,
+                            port,
+                            dAndP,
+                            { ip: ips[0].address, port, notProxy: true },
+                            ips[0].ttl,
+                        ),
                     );
                     r(undefined);
                 }
-                const pingResList = await Promise.all(ips.map((ip) => pingDomain(ip)));
+                const start = Date.now();
+                const pingResList = await Promise.all(ips.map((ip) => pingDomain(ip.address)));
                 const localStatsis: DomainChannelStats[] = [];
                 pingResList.forEach((res, i) => {
                     const lossPct =
                         // @ts-ignore
                         res.packetLoss === 'unknown' ? Infinity : Number(res.packetLoss);
                     if (lossPct <= Settings.maxPkgLossPct) {
-                        const stats = new DomainChannelStats(dAndP, {
-                            ip: ips[i],
+                        const stats = new DomainChannelStats(
+                            domain,
                             port,
-                            notProxy: true,
-                        });
+                            dAndP,
+                            {
+                                ip: ips[i].address,
+                                port,
+                                notProxy: true,
+                            },
+                            ips[i].ttl,
+                        );
                         stats.latency = res.time === 'unknown' ? Infinity : res.time;
                         stats.pkgLostPct = lossPct;
                         stats.status =
@@ -170,15 +192,36 @@ export const diagnoseDomain = async (
 // TODO:
 //export const targetFeedBack = (target: Target, latency: number) => {};
 
-export const resolveDomainIps = async (domain: string): Promise<string[]> => {
-    if (net.isIP(domain)) return [domain];
-    return await new Promise((r) => {
-        resolve(domain, (err, ips) => {
-            if (err || !ips.length) r([]);
-            r(ips);
-        });
-    });
+const stuckResolveDomainMap = new Map<string, ((res: RecordWithTtl[]) => void)[]>();
+
+// TODO: some domain's dns resolving  cost more than tens of seconds
+export const resolveDomainIps = async (domain: string): Promise<RecordWithTtl[]> => {
+    if (net.isIP(domain)) return [{ address: domain, ttl: Infinity }];
+    const res = await runWithTimeout(
+        new Promise<RecordWithTtl[]>((resolve) => {
+            const stucks = stuckResolveDomainMap.get(domain) || [];
+            stucks.push(resolve);
+            if (stucks.length === 1) stuckResolveDomainMap.set(domain, stucks);
+            else return;
+            const r = (res: RecordWithTtl[]) => {
+                (stuckResolveDomainMap.get(domain) || []).forEach((resolve) => resolve(res));
+                stuckResolveDomainMap.delete(domain);
+            };
+            const cb = (err: NodeJS.ErrnoException | null, ips: RecordWithTtl[]) => {
+                count--;
+                if (err || !ips.length) {
+                    if (!count) r([]);
+                } else r(ips);
+            };
+            let count = [resolve4(domain, { ttl: true }, cb), resolve6(domain, { ttl: true }, cb)]
+                .length;
+        }),
+        Settings.proxys.length ? Settings.dnsTimeout : Infinity,
+        [],
+    );
+    return res;
 };
+
 export const pingDomain = (domain: string, count = 10): Promise<ping.PingResponse> => {
     return new Promise((r) => {
         ping.promise
@@ -186,3 +229,56 @@ export const pingDomain = (domain: string, count = 10): Promise<ping.PingRespons
             .then(r);
     });
 };
+
+const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boolean> => {
+    const now = Date.now();
+    const expireds = stats.filter((v) => v.updateAtMili + v.ttl * 1000 < now + margin);
+    if (!expireds.length) return true;
+    const res = await new Promise<boolean>((r) => {
+        let count = expireds.length;
+        expireds.forEach(async (st) => {
+            const res = await resolveDomainIps(st.domain);
+            if (count) {
+                count--;
+                if (!res.find((ip) => ip.address === st.target.ip)) {
+                    count = 0;
+                    r(false);
+                } else {
+                    st.updateAtMili = Date.now();
+                    if (count <= 0) {
+                        r(true);
+                    }
+                }
+            }
+        });
+    });
+    return res;
+};
+
+// TODO: find better way to refresh
+(() => {
+    const waitMilli = 30000;
+    const cycleRefreshTtl = async () => {
+        const start = Date.now();
+        const stats = Array.from(domainStatsMap.values()).filter(
+            async (v) => !(await verifyTtl(v, waitMilli)),
+        );
+        const worker = async () => {
+            if (stats.length) {
+                await Promise.all(
+                    stats
+                        .splice(0, Settings.pingBatchCount)
+                        .map(
+                            async (v) =>
+                                await diagnoseDomain(v[0].domain, v[0].port, true, true, true),
+                        ),
+                );
+                process.nextTick(worker);
+            } else {
+                setTimeout(cycleRefreshTtl, waitMilli - (Date.now() - start));
+            }
+        };
+        worker();
+    };
+    cycleRefreshTtl();
+})();
