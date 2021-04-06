@@ -133,7 +133,6 @@ export const diagnoseDomain = async (
                     );
                     r(undefined);
                 }
-                const start = Date.now();
                 const pingResList = await Promise.all(ips.map((ip) => pingDomain(ip.address)));
                 const localStatsis: DomainChannelStats[] = [];
                 pingResList.forEach((res, i) => {
@@ -172,14 +171,22 @@ export const diagnoseDomain = async (
                             else mStatsList.push(s);
                         });
                 }
-                if (!forceSync && Settings.pingAsync) domainStatsMap.set(dAndP, mStatsList);
-                else {
+                if (!forceSync && Settings.pingAsync) {
+                    if (mStatsList.length) domainStatsMap.set(dAndP, mStatsList);
+                } else {
                     statsList = mStatsList;
                     r(undefined);
                 }
             }
         });
     }
+
+    if (!statsList.length) {
+        const oldStats = domainStatsMap.get(dAndP);
+        if (!oldStats?.length) return [];
+        else statsList = oldStats;
+    }
+
     domainStatsMap.set(dAndP, statsList);
 
     // pick stats
