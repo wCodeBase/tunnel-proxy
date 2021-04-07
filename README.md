@@ -39,7 +39,7 @@ Use 'proxys' option to set forward proxies.
   pingBatchCount: 100,
   dnsTimeout: 10000,
   cacheFile: './tunnel-proxy-cache.bin',
-  /** Set to true may help speeding up page switching when using Firefox */
+  /** Set to true may help speeding up http request when using Firefox */
   forceSeperateHttpRequest: false,
 }
 ```
