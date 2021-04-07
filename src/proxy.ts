@@ -6,6 +6,7 @@ const CODE_CONNECT = 'CONNECT';
 const MAX_HTTP_METHOD_LENGTH = 10;
 const MAX_HTTP_URL_LENGTH = 10000;
 const CODE_SPACE = ' '.charCodeAt(0);
+const PACKAGE_TAIL = Buffer.from('\r\n\r\n');
 const CONNECTED_FEEDBACK = Buffer.from('HTTP/1.1 200 Connection Established\r\n\r\n');
 
 const isConnectedMethod = (data: Buffer) =>
@@ -22,11 +23,31 @@ type RaceSocket = Pick<Socket, 'destroy'> & {
 };
 const closedSockSet = new Set();
 
+function parseHttpUrl(data: Buffer) {
+    const start = data.slice(0, MAX_HTTP_METHOD_LENGTH).indexOf(CODE_SPACE);
+    if (start < 0) return null;
+    const end = data.slice(start + 1, MAX_HTTP_URL_LENGTH).indexOf(CODE_SPACE);
+    if (end < 0) return null;
+    return String(data.slice(start + 1, start + end + 1));
+}
+
+function parseDomainAndPort(data: Buffer) {
+    const url = parseHttpUrl(data);
+    if (!url) return null;
+    const domainAndPort = url
+        .replace(/https?:\/\//, '')
+        .replace(/\/.*/, '')
+        .split(':');
+    const domain = domainAndPort[0];
+    const port = domainAndPort.length > 1 ? Number(domainAndPort[1]) : 80;
+    return [domain, port] as [string, number];
+}
+
 /**
  * 通过比较第一个包的响应时间选取最快的路线
  * @param connectData 当请求的方法是CONNECT时需传递
  */
-function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
+function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): RaceSocket {
     const dataCache: Buffer[] = [];
     let msock: Socket | null = null;
     let connectedSocks: Socket[] = [];
@@ -137,52 +158,102 @@ function raceConnect(dests: Target[], connectData?: Buffer): RaceSocket {
     };
 }
 
-function sockConnect(sock: Socket, targets: Target[], firstData: Buffer) {
-    if (!targets.length) sock.destroy();
+function sockConnect(
+    sock: Socket,
+    targets: Target[],
+    firstData: Buffer,
+    domain: string,
+    port: number,
+) {
+    if (!targets.length) {
+        sock.destroy();
+        return;
+    }
+    const dAndP = domain + ':' + port;
     const isConnect = isConnectedMethod(firstData);
     const connectData = isConnect ? firstData : undefined;
-    const destSock = raceConnect(targets, connectData);
-    const end = () => sock.destroy();
-    destSock.on('end', end);
-    destSock.on('error', end);
-    destSock.on('data', (data) => sock.write(data));
-    sock.on('data', destSock.write);
-    sock.on('end', destSock.destroy);
-    sock.on('error', destSock.destroy);
+    const destSock = raceConnect(targets, connectData, domain);
+    /**
+     * ${isConnect === false} means this is a http (not https) proxy request, which may recieve requests for multi domain.
+     * In this case, it's necessary to create multi destSocks for different domain.
+     * Use this map to store domain-sock mapping relations;
+     */
+    const restDestSockMap = isConnect ? null : new Map([[dAndP, destSock]]);
+    const genDestEnd = (dAndP: string) => () => {
+        if (!restDestSockMap) sock.destroy();
+        else {
+            restDestSockMap.get(dAndP)?.destroy();
+            restDestSockMap.delete(dAndP);
+        }
+    };
+    const destEnd = genDestEnd(dAndP);
+    const end = () => {
+        if (!restDestSockMap) destSock.destroy();
+        else Array.from(restDestSockMap.values()).forEach((s) => s.destroy());
+    };
+    const onDataBack = (data: Buffer) => {
+        sock.write(data);
+    };
+    destSock.on('end', destEnd);
+    destSock.on('error', destEnd);
+    destSock.on('data', onDataBack);
+    let lastDAndP = '';
+    sock.on('data', async (data) => {
+        if (restDestSockMap) {
+            if (lastDAndP) {
+                restDestSockMap.get(lastDAndP)?.write(data);
+            } else {
+                const domainAndPort = parseDomainAndPort(data);
+                if (!domainAndPort) destSock.write(data);
+                else {
+                    const [domain, port] = domainAndPort;
+                    const dAndP = `${domain}:${port}}`;
+                    lastDAndP = dAndP;
+                    let sock = restDestSockMap.get(dAndP);
+                    if (!sock) {
+                        const target = getDomainProxy(domain);
+                        const targets = target ? [target] : await diagnoseDomain(domain, port);
+                        sock = raceConnect(targets, undefined, domain);
+                        restDestSockMap.set(dAndP, sock);
+                    }
+                    sock.write(data);
+                }
+            }
+            if (data.includes(PACKAGE_TAIL)) {
+                lastDAndP = '';
+                if (Settings.forceSeperateHttpRequest) sock.destroy();
+            }
+        } else destSock.write(data);
+    });
+    sock.on('end', end);
+    sock.on('error', end);
     if (connectData) sock.write(CONNECTED_FEEDBACK);
     else destSock.write(firstData);
 }
 
-function parseHttpUrl(data: Buffer) {
-    const start = data.slice(0, MAX_HTTP_METHOD_LENGTH).indexOf(CODE_SPACE);
-    if (start < 0) return null;
-    const end = data.slice(start + 1, MAX_HTTP_URL_LENGTH).indexOf(CODE_SPACE);
-    if (end < 0) return null;
-    return String(data.slice(start + 1, start + end + 1));
-}
+const getDomainProxy = (() => {
+    const domainTargetMap = new Map<string, Target>();
+    const domainProxyPairs: [string | RegExp, Target][] = [];
+    Settings.proxys.forEach((target) => {
+        target.fixedDomains?.forEach((s) => domainProxyPairs.push([s, target]));
+    });
+
+    return (domain: string) => {
+        let target = domainTargetMap.get(domain);
+        if (target) return target;
+        domainProxyPairs.some((v) => {
+            if (domain.match(v[0])) {
+                target = v[1];
+                domainTargetMap.set(domain, target);
+                return true;
+            }
+        });
+        return target;
+    };
+})();
 
 export function startProxy(): void {
     tryRestoreCache();
-    const getDomainProxy = (() => {
-        const domainTargetMap = new Map<string, Target>();
-        const domainProxyPairs: [string | RegExp, Target][] = [];
-        Settings.proxys.forEach((target) => {
-            target.fixedDomains?.forEach((s) => domainProxyPairs.push([s, target]));
-        });
-
-        return (domain: string) => {
-            let target = domainTargetMap.get(domain);
-            if (target) return target;
-            domainProxyPairs.some((v) => {
-                if (domain.match(v[0])) {
-                    target = v[1];
-                    domainTargetMap.set(domain, target);
-                    return true;
-                }
-            });
-            return target;
-        };
-    })();
 
     const sockIpHostSet = new Set<string>();
 
@@ -197,23 +268,18 @@ export function startProxy(): void {
             sockIpHostSet.delete(strIpHost);
         });
         sock.once('data', async (data) => {
-            const url = parseHttpUrl(data);
-            if (!url) {
+            const domainAndPort = parseDomainAndPort(data);
+            if (!domainAndPort) {
                 // TODO: 返回错误信息, 可开关
                 sock.destroy();
                 return;
             }
-            const domainAndPort = url
-                .replace(/https?:\/\//, '')
-                .replace(/\/.*/, '')
-                .split(':');
-            const domain = domainAndPort[0];
+            const [domain, port] = domainAndPort;
             const target = getDomainProxy(domain);
-            if (target) sockConnect(sock, [target], data);
+            if (target) sockConnect(sock, [target], data, domain, port);
             else {
-                const port = domainAndPort.length > 1 ? Number(domainAndPort[1]) : 80;
                 const targets = await diagnoseDomain(domain, port);
-                sockConnect(sock, targets, data);
+                sockConnect(sock, targets, data, domain, port);
             }
         });
     });

@@ -30,6 +30,16 @@ Use 'proxys' option to set forward proxies.
       maxGoodLatency: 50,
     },
   ],
-  port: 8000
+  port: 8000,
+  host: '0.0.0.0',
+  proxyCostBonus: 30,
+  maxPkgLossPct: 50,
+  maxGoodLatency: 150,
+  pingAsync: true,
+  pingBatchCount: 100,
+  dnsTimeout: 10000,
+  cacheFile: './tunnel-proxy-cache.bin',
+  /** Set to true may help speeding up page switching when using Firefox */
+  forceSeperateHttpRequest: false,
 }
 ```

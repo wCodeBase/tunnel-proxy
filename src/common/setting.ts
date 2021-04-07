@@ -16,4 +16,6 @@ export const Settings = {
     pingBatchCount: 100,
     dnsTimeout: 10000,
     cacheFile: './tunnel-proxy-cache.bin',
+    /** Set to true may help speeding up page switching when using Firefox */
+    forceSeperateHttpRequest: false,
 };
