@@ -232,7 +232,10 @@ export const resolveDomainIps = async (domain: string): Promise<RecordWithTtl[]>
 export const pingDomain = (domain: string, count = 10): Promise<ping.PingResponse> => {
     return new Promise((r) => {
         ping.promise
-            .probe(domain, { timeout: 0.3, extra: ['-c', '' + count, '-i', '0.2'] })
+            .probe(domain, {
+                timeout: Settings.pingTimeout,
+                extra: ['-c', '' + count, '-i', '0.2'],
+            })
             .then(r);
     });
 };

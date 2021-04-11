@@ -13,6 +13,7 @@ export const Settings = {
     maxPkgLossPct: 50,
     maxGoodLatency: 150,
     pingAsync: true,
+    pingTimeout: 10,
     pingBatchCount: 100,
     dnsTimeout: 10000,
     cacheFile: './tunnel-proxy-cache.bin',

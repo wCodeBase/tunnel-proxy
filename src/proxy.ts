@@ -197,7 +197,7 @@ function sockConnect(
     destSock.on('end', destEnd);
     destSock.on('error', destEnd);
     destSock.on('data', onDataBack);
-    let lastDAndP = '';
+    let lastDAndP = dAndP;
     sock.on('data', async (data) => {
         if (restDestSockMap) {
             if (lastDAndP) {
