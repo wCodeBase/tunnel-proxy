@@ -7,7 +7,7 @@ import { startProxy } from './proxy';
 const program = new Command();
 
 program
-    .version('0.0.20')
+    .version(require('../package.json').version)
     .option('-p, --port <port number>', 'Port to listen on')
     .option('-h, --host <host>', 'Host to bind, default 0.0.0.0')
     .option('-c, --config <config file path>', 'use a config file')
