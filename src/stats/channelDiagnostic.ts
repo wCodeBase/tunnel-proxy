@@ -7,6 +7,7 @@ import fs from 'fs';
 import { CacheData, DomainChannelStats } from './types';
 import { parseDomain, runWithTimeout, unZipipData, zipData } from '../common/util';
 import { debounce } from 'lodash';
+import isOnline from 'is-online';
 
 /**
  * Map to store diagnostic infos.
@@ -269,6 +270,10 @@ const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boole
 (() => {
     const waitMilli = 30000;
     const cycleRefreshTtl = async () => {
+        if (!(await isOnline())) {
+            setTimeout(cycleRefreshTtl, 5000);
+            return;
+        }
         const start = Date.now();
         const stats = Array.from(domainStatsMap.values()).filter(
             async (v) => !(await verifyTtl(v, waitMilli)),
