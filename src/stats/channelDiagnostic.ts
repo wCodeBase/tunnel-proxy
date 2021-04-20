@@ -5,7 +5,7 @@ import ping from 'ping';
 import path from 'path';
 import fs from 'fs';
 import { CacheData, DomainChannelStats } from './types';
-import { parseDomain, runWithTimeout, unZipipData, zipData } from '../common/util';
+import { parseDomain, realTimeout, runWithTimeout, unZipipData, zipData } from '../common/util';
 import { debounce } from 'lodash';
 import isOnline from 'is-online';
 
@@ -269,6 +269,7 @@ const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boole
 // TODO: find better way to refresh
 (() => {
     const waitMilli = 30000;
+    const { setTimeout } = realTimeout;
     const cycleRefreshTtl = async () => {
         if (!(await isOnline())) {
             setTimeout(cycleRefreshTtl, 5000);
