@@ -1,5 +1,6 @@
 import { deflate, unzip } from 'zlib';
 import { Settings } from './setting';
+import { networkInterfaces } from 'os';
 
 const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
 export function genRandomString(length: number) {
@@ -61,15 +62,25 @@ export function runWithTimeout<T, V>(
  */
 export const realTimeout = (() => {
     let cbPairs: { at: number; cb: () => void }[] = [];
+    let intervalCbPairs: { interval: number; cb: () => void; last?: number }[] = [];
+    const tryRun = (cb: () => void) => {
+        try {
+            cb();
+        } catch (e) {
+            console.log('error in realTimeout cb: ', e);
+        }
+    };
     const deamonCb = () => {
         setTimeout(deamonCb, Settings.timeoutUnit);
         const now = Date.now();
         cbPairs = cbPairs.filter((v) => {
             if (v.at > now) return true;
-            try {
-                v.cb();
-            } catch (e) {
-                console.log('error in realTimeout cb: ', e);
+            tryRun(v.cb);
+        });
+        intervalCbPairs.forEach((v) => {
+            if (!v.last || v.last + v.interval < now) {
+                tryRun(v.cb);
+                v.last = Date.now();
             }
         });
     };
@@ -78,5 +89,16 @@ export const realTimeout = (() => {
         setTimeout: (cb: () => void, timeout: number) =>
             cbPairs.push({ at: Date.now() + timeout, cb }),
         clearTimeout: (cb: () => void) => (cbPairs = cbPairs.filter((v) => v.cb !== cb)),
+        setInterval: (cb: () => void, interval: number) => intervalCbPairs.push({ interval, cb }),
+        clearInterval: (cb: () => void) =>
+            (intervalCbPairs = intervalCbPairs.filter((v) => v.cb !== cb)),
     };
 })();
+
+export const getIpAddressList = () => {
+    let ipList: string[] = [];
+    Object.entries(networkInterfaces()).forEach(([dev, info]) => {
+        if (info) ipList = ipList.concat(info.map((v) => v.address));
+    });
+    return ipList;
+};
