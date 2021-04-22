@@ -7,7 +7,7 @@ import { startProxy } from './proxy';
 const program = new Command();
 
 program
-    .version('0.0.20')
+    .version(require('../package.json').version)
     .option('-p, --port <port number>', 'Port to listen on')
     .option('-h, --host <host>', 'Host to bind, default 0.0.0.0')
     .option('-c, --config <config file path>', 'use a config file')
@@ -17,7 +17,7 @@ program
     )
     .parse(process.argv);
 
-const existWithError = (error: string) => {
+const exitWithError = (error: string) => {
     console.error(error);
     process.exit();
 };
@@ -27,7 +27,7 @@ const opts = program.opts();
 if (opts.port) {
     const port = Number(opts.port);
     if (Number.isInteger(port)) Settings.port = port;
-    else existWithError('Illegal port number');
+    else exitWithError('Illegal port number');
 }
 
 if (opts.host) Settings.host = opts.host;
@@ -36,12 +36,12 @@ if (opts.cache) Settings.cacheFile = opts.cache;
 
 if (opts.config) {
     const configPath = path.resolve(opts.config);
-    if (!fs.existsSync(configPath)) existWithError('Config file not found');
+    if (!fs.existsSync(configPath)) exitWithError('Config file not found');
     try {
         const config = require(configPath);
         Object.assign(Settings, config);
     } catch (e) {
-        existWithError(`Illegal config file: ${e.message}`);
+        exitWithError(`Illegal config file: ${e.message}`);
     }
 }
 

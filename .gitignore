@@ -107,4 +107,6 @@ config.js
 
 yarn.lock
 
+package-lock.json
+
 cache.bin

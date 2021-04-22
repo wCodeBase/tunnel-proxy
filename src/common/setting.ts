@@ -19,4 +19,6 @@ export const Settings = {
     cacheFile: './tunnel-proxy-cache.bin',
     /** Set to true may help speeding up page switching when using Firefox */
     forceSeperateHttpRequest: false,
+    /** time unit (in millisecond) for the realTimeout methods */
+    timeoutUnit: 500,
 };

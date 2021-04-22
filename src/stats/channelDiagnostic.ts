@@ -5,8 +5,16 @@ import ping from 'ping';
 import path from 'path';
 import fs from 'fs';
 import { CacheData, DomainChannelStats } from './types';
-import { parseDomain, runWithTimeout, unZipipData, zipData } from '../common/util';
+import {
+    getIpAddressList,
+    parseDomain,
+    realTimeout,
+    runWithTimeout,
+    unZipipData,
+    zipData,
+} from '../common/util';
 import { debounce } from 'lodash';
+import isOnline from 'is-online';
 
 /**
  * Map to store diagnostic infos.
@@ -268,10 +276,20 @@ const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boole
 // TODO: find better way to refresh
 (() => {
     const waitMilli = 30000;
-    const cycleRefreshTtl = async () => {
+    const { setTimeout } = realTimeout;
+    let lock = '';
+    const cycleRefreshTtl = async (ignoreLock = false, forceUpdate = false) => {
+        if (lock && !ignoreLock) return;
+        if (!(await isOnline())) {
+            setTimeout(cycleRefreshTtl, 5000);
+            return;
+        }
+        const mLock = Math.random().toString();
+        lock = mLock;
+        if (ignoreLock) realTimeout.clearTimeout(cycleRefreshTtl);
         const start = Date.now();
         const stats = Array.from(domainStatsMap.values()).filter(
-            async (v) => !(await verifyTtl(v, waitMilli)),
+            forceUpdate ? () => true : async (v) => !(await verifyTtl(v, waitMilli)),
         );
         const worker = async () => {
             if (stats.length) {
@@ -283,12 +301,26 @@ const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boole
                                 await diagnoseDomain(v[0].domain, v[0].port, true, true, true),
                         ),
                 );
+                if (lock !== mLock) return;
                 process.nextTick(worker);
             } else {
                 setTimeout(cycleRefreshTtl, waitMilli - (Date.now() - start));
+                lock = '';
             }
         };
         worker();
     };
     cycleRefreshTtl();
+
+    // listening for ip change
+    let lastIpList: string[] | null = null;
+    realTimeout.setInterval(() => {
+        const ipList = getIpAddressList();
+        if (lastIpList) {
+            if (JSON.stringify(lastIpList) !== JSON.stringify(ipList)) {
+                cycleRefreshTtl(true, true);
+            }
+        }
+        lastIpList = ipList;
+    }, 1000);
 })();
