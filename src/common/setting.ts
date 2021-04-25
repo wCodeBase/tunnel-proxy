@@ -21,4 +21,5 @@ export const Settings = {
     forceSeperateHttpRequest: false,
     /** time unit (in millisecond) for the realTimeout methods */
     timeoutUnit: 500,
+    useIpv6: false,
 };

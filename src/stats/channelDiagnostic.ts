@@ -228,8 +228,10 @@ export const resolveDomainIps = async (domain: string): Promise<RecordWithTtl[]>
                     if (!count) r([]);
                 } else r(ips);
             };
-            let count = [resolve4(domain, { ttl: true }, cb), resolve6(domain, { ttl: true }, cb)]
-                .length;
+            let count = [
+                resolve4(domain, { ttl: true }, cb),
+                ...(Settings.useIpv6 ? [resolve6(domain, { ttl: true }, cb)] : []),
+            ].length;
         }),
         Settings.proxys.length ? Settings.dnsTimeout : Infinity,
         [],
@@ -237,15 +239,39 @@ export const resolveDomainIps = async (domain: string): Promise<RecordWithTtl[]>
     return res;
 };
 
+const failedPingRes = {
+    host: '',
+    alive: false,
+    output: '',
+    time: Infinity,
+    times: [],
+    min: 'Infinity',
+    max: 'Infinity',
+    avg: 'Infinity',
+    stddev: '0',
+    packetLoss: '100',
+    numeric_host: '',
+};
+
 export const pingDomain = (domain: string, count = 10): Promise<ping.PingResponse> => {
-    return new Promise((r) => {
-        ping.promise
-            .probe(domain, {
-                timeout: Settings.pingTimeout,
-                extra: ['-c', '' + count, '-i', '0.2'],
-            })
-            .then(r);
-    });
+    const failedRes = { ...failedPingRes, host: domain };
+    return runWithTimeout(
+        new Promise((r) => {
+            ping.promise
+                .probe(domain, {
+                    v6: domain.includes(':'),
+                    timeout: Settings.pingTimeout,
+                    extra: ['-c', '' + count, '-i', '0.2'],
+                })
+                .then(r)
+                .catch((e) => {
+                    console.log('Error: ping failed:\n\t', domain, e);
+                    r(failedRes);
+                });
+        }),
+        count * 1000,
+        failedRes,
+    );
 };
 
 const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boolean> => {
@@ -296,9 +322,12 @@ const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boole
                 await Promise.all(
                     stats
                         .splice(0, Settings.pingBatchCount)
-                        .map(
-                            async (v) =>
-                                await diagnoseDomain(v[0].domain, v[0].port, true, true, true),
+                        .map((v) =>
+                            runWithTimeout(
+                                diagnoseDomain(v[0].domain, v[0].port, true, true, true),
+                                3000,
+                                undefined,
+                            ),
                         ),
                 );
                 if (lock !== mLock) return;
