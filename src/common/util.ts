@@ -102,3 +102,22 @@ export const getIpAddressList = () => {
     });
     return ipList;
 };
+
+export const batchFilter = async <T>(
+    datas: T[],
+    cb: (data: T) => Promise<boolean>,
+    batchCount = 30,
+) => {
+    if (batchCount <= 0) batchCount = 3;
+    const res = [] as T[];
+    const src = [...datas];
+    await Promise.all(
+        new Array(batchCount).fill(1).map(async () => {
+            while (src.length) {
+                const item = src.pop();
+                if (item && (await cb(item))) res.push(item);
+            }
+        }),
+    );
+    return res;
+};

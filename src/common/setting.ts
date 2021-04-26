@@ -14,7 +14,7 @@ export const Settings = {
     maxGoodLatency: 150,
     pingAsync: true,
     pingTimeout: 10,
-    pingBatchCount: 100,
+    pingBatchCount: 50,
     dnsTimeout: 10000,
     cacheFile: './tunnel-proxy-cache.bin',
     /** Set to true may help speeding up page switching when using Firefox */

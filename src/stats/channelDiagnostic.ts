@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { CacheData, DomainChannelStats } from './types';
 import {
+    batchFilter,
     getIpAddressList,
     parseDomain,
     realTimeout,
@@ -274,10 +275,24 @@ export const pingDomain = (domain: string, count = 10): Promise<ping.PingRespons
     );
 };
 
-const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boolean> => {
+/**
+ * Verify dns ttl.
+ * @param reuseThesameIp true to return true if ttl expired but new dns resolve result contains old ip.
+ * @param forceExpired true to force verify even ttl remains;
+ */
+const verifyTtl = async (
+    stats: DomainChannelStats[],
+    margin = 0,
+    reuseThesameIp = true,
+    forceExpired = false,
+): Promise<boolean> => {
+    stats = stats.filter((v) => v.target.notProxy);
     const now = Date.now();
-    const expireds = stats.filter((v) => v.updateAtMili + v.ttl * 1000 < now + margin);
+    const expireds = forceExpired
+        ? stats
+        : stats.filter((v) => v.updateAtMili + v.ttl * 1000 < now + margin);
     if (!expireds.length) return true;
+    if (!reuseThesameIp) return false;
     const res = await new Promise<boolean>((r) => {
         let count = expireds.length;
         expireds.forEach(async (st) => {
@@ -314,14 +329,18 @@ const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boole
         lock = mLock;
         if (ignoreLock) realTimeout.clearTimeout(cycleRefreshTtl);
         const start = Date.now();
-        const stats = Array.from(domainStatsMap.values()).filter(
-            forceUpdate ? () => true : async (v) => !(await verifyTtl(v, waitMilli)),
-        );
+        const existStats = Array.from(domainStatsMap.values());
+        const stats = forceUpdate
+            ? existStats
+            : await batchFilter(
+                  existStats,
+                  forceUpdate ? async () => true : async (v) => !(await verifyTtl(v, waitMilli)),
+              );
         const worker = async () => {
             if (stats.length) {
                 await Promise.all(
                     stats
-                        .splice(0, Settings.pingBatchCount)
+                        .splice(0, Math.min(Settings.pingBatchCount, 20))
                         .map((v) =>
                             runWithTimeout(
                                 diagnoseDomain(v[0].domain, v[0].port, true, true, true),
