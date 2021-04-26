@@ -18,6 +18,7 @@ if (masterBranchs.includes(curBranch)) {
 } else {
     if (curBranch === tag) tagVersion++;
     else tagVersion = 0;
+    if (!tag) build++;
     tag = curBranch;
 }
 
