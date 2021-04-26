@@ -4,7 +4,7 @@ import { RecordWithTtl, resolve4, resolve6 } from 'dns';
 import ping from 'ping';
 import path from 'path';
 import fs from 'fs';
-import { CacheData, DomainChannelStats } from './types';
+import { CacheData, DomainChannelStats, DomainStatDesc } from './types';
 import {
     batchFilter,
     getIpAddressList,
@@ -27,11 +27,20 @@ import isOnline from 'is-online';
 export const domainStatsMap = new Map<string, DomainChannelStats[]>();
 
 /**
- * Map to count domain request times;
+ * Map to count domain request times and last active time;
  *
  * Key is `domain:port` string.
  */
-export let domainReqCountMap = new Map<string, number>();
+export let domainStatDescMap = new Map<string, DomainStatDesc>();
+
+const judgeDomainActivity = (desc: DomainStatDesc) => {
+    const now = Math.floor(Date.now() / 3600000);
+    if (!desc.at) desc.at = now;
+    if (desc.at > now + Settings.cacheDomainLife) return true;
+    desc.at = now;
+    desc.count = Math.floor(desc.count / 3);
+    return !!desc.count;
+};
 
 export const tryRestoreCache = async () => {
     const cacheFile = path.resolve(Settings.cacheFile);
@@ -41,8 +50,8 @@ export const tryRestoreCache = async () => {
                 String(await unZipipData(fs.readFileSync(cacheFile))),
             );
             if (data.domainReqCountsDec) {
-                domainReqCountMap = new Map(data.domainReqCountsDec.map((v) => [v.dAndP, v.count]));
-
+                data.domainReqCountsDec = data.domainReqCountsDec.filter(judgeDomainActivity);
+                domainStatDescMap = new Map(data.domainReqCountsDec.map((v) => [v.dAndP, v]));
                 // Ping test after start
                 const dataToPing = Array.from(data.domainReqCountsDec);
                 const pingTest = async () => {
@@ -72,9 +81,9 @@ export const tryRestoreCache = async () => {
 
 export const trySaveCache = async () => {
     const cacheData: CacheData = {};
-    cacheData.domainReqCountsDec = Array.from(domainReqCountMap)
-        .map((p) => ({ dAndP: p[0], count: p[1] }))
-        .sort((a, b) => b.count - a.count);
+    cacheData.domainReqCountsDec = Array.from(domainStatDescMap.values()).sort(
+        (a, b) => b.count - a.count,
+    );
 
     try {
         fs.writeFileSync(Settings.cacheFile, await zipData(Buffer.from(JSON.stringify(cacheData))));
@@ -87,16 +96,16 @@ export const judgeToSaveCache = (() => {
     let lastUpdatedAt = 0;
     let lastDomainCount = 0;
     return async () => {
-        if (domainReqCountMap.size === lastDomainCount) return;
+        if (domainStatDescMap.size === lastDomainCount) return;
         if (
             lastUpdatedAt &&
-            domainReqCountMap.size - lastDomainCount < 3 &&
+            domainStatDescMap.size - lastDomainCount < 3 &&
             Date.now() - lastUpdatedAt < 10 * 60 * 1000
         )
             return;
         await trySaveCache();
         lastUpdatedAt = Date.now();
-        lastDomainCount = domainReqCountMap.size;
+        lastDomainCount = domainStatDescMap.size;
     };
 })();
 
@@ -117,9 +126,13 @@ export const diagnoseDomain = async (
 ) => {
     const dAndP = `${domain}:${port}`;
     if (!ignoreCount) {
-        const reqCount = domainReqCountMap.get(dAndP) || 0;
-        if (!reqCount) judgeToSaveCacheDebounced();
-        domainReqCountMap.set(dAndP, reqCount + 1);
+        const desc = domainStatDescMap.get(dAndP) || { dAndP, count: 0 };
+        desc.count++;
+        desc.at = Math.floor(Date.now() / 3600000);
+        if (desc.count === 1) {
+            domainStatDescMap.set(dAndP, desc);
+            judgeToSaveCacheDebounced();
+        }
     }
     let statsList = rediagnose ? [] : domainStatsMap.get(dAndP) || [];
     if (!statsList.length || !(await verifyTtl(statsList))) {
@@ -371,4 +384,15 @@ const verifyTtl = async (
         }
         lastIpList = ipList;
     }, 1000);
+
+    // Set interval to judge cached domain life.
+    realTimeout.setInterval(() => {
+        Array.from(domainStatDescMap.entries()).forEach(([dAndP, desc]) => {
+            if (!judgeDomainActivity(desc)) {
+                domainStatDescMap.delete(dAndP);
+                domainStatsMap.delete(dAndP);
+            }
+        });
+        judgeToSaveCache();
+    }, 6000 || 3600000 * 12);
 })();

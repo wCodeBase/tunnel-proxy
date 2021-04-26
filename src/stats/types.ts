@@ -26,10 +26,14 @@ export class DomainChannelStats {
     }
 }
 
+export interface DomainStatDesc {
+    /** domain with port (`domain:port`) */
+    dAndP: string;
+    count: number;
+    /** Last active time, by the hour */
+    at?: number;
+}
+
 export interface CacheData {
-    domainReqCountsDec?: {
-        /** domain with port (`domain:port`) */
-        dAndP: string;
-        count: number;
-    }[];
+    domainReqCountsDec?: DomainStatDesc[];
 }
