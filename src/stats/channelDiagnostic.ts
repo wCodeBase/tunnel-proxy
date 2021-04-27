@@ -36,7 +36,7 @@ export let domainStatDescMap = new Map<string, DomainStatDesc>();
 const judgeDomainActivity = (desc: DomainStatDesc) => {
     const now = Math.floor(Date.now() / 3600000);
     if (!desc.at) desc.at = now;
-    if (desc.at > now + Settings.cacheDomainLife) return true;
+    if (desc.at + Settings.cacheDomainLife > now) return true;
     desc.at = now;
     desc.count = Math.floor(desc.count / 3);
     return !!desc.count;

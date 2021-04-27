@@ -194,10 +194,13 @@ function sockConnect(
     const onDataBack = (data: Buffer) => {
         sock.write(data);
     };
-    destSock.on('end', destEnd);
-    destSock.on('error', destEnd);
-    destSock.on('data', onDataBack);
-    let lastDAndP = dAndP;
+    const bindSock = (rSock: RaceSocket) => {
+        rSock.on('end', destEnd);
+        rSock.on('error', destEnd);
+        rSock.on('data', onDataBack);
+    };
+    bindSock(destSock);
+    let lastDAndP = firstData.slice(-PACKAGE_TAIL.length).includes(PACKAGE_TAIL) ? '' : dAndP;
     sock.on('data', async (data) => {
         if (restDestSockMap) {
             if (lastDAndP) {
@@ -215,11 +218,12 @@ function sockConnect(
                         const targets = target ? [target] : await diagnoseDomain(domain, port);
                         sock = raceConnect(targets, undefined, domain);
                         restDestSockMap.set(dAndP, sock);
+                        bindSock(sock);
                     }
                     sock.write(data);
                 }
             }
-            if (data.includes(PACKAGE_TAIL)) {
+            if (data.slice(-PACKAGE_TAIL.length).includes(PACKAGE_TAIL)) {
                 lastDAndP = '';
                 if (Settings.forceSeperateHttpRequest) sock.destroy();
             }
