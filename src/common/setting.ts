@@ -14,11 +14,19 @@ export const Settings = {
     maxGoodLatency: 150,
     pingAsync: true,
     pingTimeout: 10,
-    pingBatchCount: 100,
+    pingBatchCount: 50,
     dnsTimeout: 10000,
     cacheFile: './tunnel-proxy-cache.bin',
+    /**
+     * After how much hours of inactive period a cached domain should be judge to clean.
+     *
+     * Each time a domain is judged to clean, it's count will be devidied by 3, until 0,
+     * which means this domain is to be deleted.
+     */
+    cacheDomainLife: 30 * 24,
     /** Set to true may help speeding up page switching when using Firefox */
     forceSeperateHttpRequest: false,
-    /** time unit (in millisecond) for the realTimeout methods */
+    /** time unit (millisecond) for the realTimeout methods */
     timeoutUnit: 500,
+    useIpv6: false,
 };

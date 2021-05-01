@@ -4,8 +4,9 @@ import { RecordWithTtl, resolve4, resolve6 } from 'dns';
 import ping from 'ping';
 import path from 'path';
 import fs from 'fs';
-import { CacheData, DomainChannelStats } from './types';
+import { CacheData, DomainChannelStats, DomainStatDesc } from './types';
 import {
+    batchFilter,
     getIpAddressList,
     parseDomain,
     realTimeout,
@@ -26,11 +27,20 @@ import isOnline from 'is-online';
 export const domainStatsMap = new Map<string, DomainChannelStats[]>();
 
 /**
- * Map to count domain request times;
+ * Map to count domain request times and last active time;
  *
  * Key is `domain:port` string.
  */
-export let domainReqCountMap = new Map<string, number>();
+export let domainStatDescMap = new Map<string, DomainStatDesc>();
+
+const judgeDomainActivity = (desc: DomainStatDesc) => {
+    const now = Math.floor(Date.now() / 3600000);
+    if (!desc.at) desc.at = now;
+    if (desc.at + Settings.cacheDomainLife > now) return true;
+    desc.at = now;
+    desc.count = Math.floor(desc.count / 3);
+    return !!desc.count;
+};
 
 export const tryRestoreCache = async () => {
     const cacheFile = path.resolve(Settings.cacheFile);
@@ -40,8 +50,8 @@ export const tryRestoreCache = async () => {
                 String(await unZipipData(fs.readFileSync(cacheFile))),
             );
             if (data.domainReqCountsDec) {
-                domainReqCountMap = new Map(data.domainReqCountsDec.map((v) => [v.dAndP, v.count]));
-
+                data.domainReqCountsDec = data.domainReqCountsDec.filter(judgeDomainActivity);
+                domainStatDescMap = new Map(data.domainReqCountsDec.map((v) => [v.dAndP, v]));
                 // Ping test after start
                 const dataToPing = Array.from(data.domainReqCountsDec);
                 const pingTest = async () => {
@@ -71,9 +81,9 @@ export const tryRestoreCache = async () => {
 
 export const trySaveCache = async () => {
     const cacheData: CacheData = {};
-    cacheData.domainReqCountsDec = Array.from(domainReqCountMap)
-        .map((p) => ({ dAndP: p[0], count: p[1] }))
-        .sort((a, b) => b.count - a.count);
+    cacheData.domainReqCountsDec = Array.from(domainStatDescMap.values()).sort(
+        (a, b) => b.count - a.count,
+    );
 
     try {
         fs.writeFileSync(Settings.cacheFile, await zipData(Buffer.from(JSON.stringify(cacheData))));
@@ -86,16 +96,16 @@ export const judgeToSaveCache = (() => {
     let lastUpdatedAt = 0;
     let lastDomainCount = 0;
     return async () => {
-        if (domainReqCountMap.size === lastDomainCount) return;
+        if (domainStatDescMap.size === lastDomainCount) return;
         if (
             lastUpdatedAt &&
-            domainReqCountMap.size - lastDomainCount < 3 &&
+            domainStatDescMap.size - lastDomainCount < 3 &&
             Date.now() - lastUpdatedAt < 10 * 60 * 1000
         )
             return;
         await trySaveCache();
         lastUpdatedAt = Date.now();
-        lastDomainCount = domainReqCountMap.size;
+        lastDomainCount = domainStatDescMap.size;
     };
 })();
 
@@ -116,9 +126,13 @@ export const diagnoseDomain = async (
 ) => {
     const dAndP = `${domain}:${port}`;
     if (!ignoreCount) {
-        const reqCount = domainReqCountMap.get(dAndP) || 0;
-        if (!reqCount) judgeToSaveCacheDebounced();
-        domainReqCountMap.set(dAndP, reqCount + 1);
+        const desc = domainStatDescMap.get(dAndP) || { dAndP, count: 0 };
+        desc.count++;
+        desc.at = Math.floor(Date.now() / 3600000);
+        if (desc.count === 1) {
+            domainStatDescMap.set(dAndP, desc);
+            judgeToSaveCacheDebounced();
+        }
     }
     let statsList = rediagnose ? [] : domainStatsMap.get(dAndP) || [];
     if (!statsList.length || !(await verifyTtl(statsList))) {
@@ -228,8 +242,10 @@ export const resolveDomainIps = async (domain: string): Promise<RecordWithTtl[]>
                     if (!count) r([]);
                 } else r(ips);
             };
-            let count = [resolve4(domain, { ttl: true }, cb), resolve6(domain, { ttl: true }, cb)]
-                .length;
+            let count = [
+                resolve4(domain, { ttl: true }, cb),
+                ...(Settings.useIpv6 ? [resolve6(domain, { ttl: true }, cb)] : []),
+            ].length;
         }),
         Settings.proxys.length ? Settings.dnsTimeout : Infinity,
         [],
@@ -237,21 +253,59 @@ export const resolveDomainIps = async (domain: string): Promise<RecordWithTtl[]>
     return res;
 };
 
-export const pingDomain = (domain: string, count = 10): Promise<ping.PingResponse> => {
-    return new Promise((r) => {
-        ping.promise
-            .probe(domain, {
-                timeout: Settings.pingTimeout,
-                extra: ['-c', '' + count, '-i', '0.2'],
-            })
-            .then(r);
-    });
+const failedPingRes = {
+    host: '',
+    alive: false,
+    output: '',
+    time: Infinity,
+    times: [],
+    min: 'Infinity',
+    max: 'Infinity',
+    avg: 'Infinity',
+    stddev: '0',
+    packetLoss: '100',
+    numeric_host: '',
 };
 
-const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boolean> => {
+export const pingDomain = (domain: string, count = 10): Promise<ping.PingResponse> => {
+    const failedRes = { ...failedPingRes, host: domain };
+    return runWithTimeout(
+        new Promise((r) => {
+            ping.promise
+                .probe(domain, {
+                    v6: domain.includes(':'),
+                    timeout: Settings.pingTimeout,
+                    extra: ['-c', '' + count, '-i', '0.2'],
+                })
+                .then(r)
+                .catch((e) => {
+                    console.log('Error: ping failed:\n\t', domain, e);
+                    r(failedRes);
+                });
+        }),
+        count * 1000,
+        failedRes,
+    );
+};
+
+/**
+ * Verify dns ttl.
+ * @param reuseThesameIp true to return true if ttl expired but new dns resolve result contains old ip.
+ * @param forceExpired true to force verify even ttl remains;
+ */
+const verifyTtl = async (
+    stats: DomainChannelStats[],
+    margin = 0,
+    reuseThesameIp = true,
+    forceExpired = false,
+): Promise<boolean> => {
+    stats = stats.filter((v) => v.target.notProxy);
     const now = Date.now();
-    const expireds = stats.filter((v) => v.updateAtMili + v.ttl * 1000 < now + margin);
+    const expireds = forceExpired
+        ? stats
+        : stats.filter((v) => v.updateAtMili + v.ttl * 1000 < now + margin);
     if (!expireds.length) return true;
+    if (!reuseThesameIp) return false;
     const res = await new Promise<boolean>((r) => {
         let count = expireds.length;
         expireds.forEach(async (st) => {
@@ -288,17 +342,24 @@ const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boole
         lock = mLock;
         if (ignoreLock) realTimeout.clearTimeout(cycleRefreshTtl);
         const start = Date.now();
-        const stats = Array.from(domainStatsMap.values()).filter(
-            forceUpdate ? () => true : async (v) => !(await verifyTtl(v, waitMilli)),
-        );
+        const existStats = Array.from(domainStatsMap.values());
+        const stats = forceUpdate
+            ? existStats
+            : await batchFilter(
+                  existStats,
+                  forceUpdate ? async () => true : async (v) => !(await verifyTtl(v, waitMilli)),
+              );
         const worker = async () => {
             if (stats.length) {
                 await Promise.all(
                     stats
-                        .splice(0, Settings.pingBatchCount)
-                        .map(
-                            async (v) =>
-                                await diagnoseDomain(v[0].domain, v[0].port, true, true, true),
+                        .splice(0, Math.min(Settings.pingBatchCount, 20))
+                        .map((v) =>
+                            runWithTimeout(
+                                diagnoseDomain(v[0].domain, v[0].port, true, true, true),
+                                3000,
+                                undefined,
+                            ),
                         ),
                 );
                 if (lock !== mLock) return;
@@ -323,4 +384,15 @@ const verifyTtl = async (stats: DomainChannelStats[], margin = 0): Promise<boole
         }
         lastIpList = ipList;
     }, 1000);
+
+    // Set interval to judge cached domain life.
+    realTimeout.setInterval(() => {
+        Array.from(domainStatDescMap.entries()).forEach(([dAndP, desc]) => {
+            if (!judgeDomainActivity(desc)) {
+                domainStatDescMap.delete(dAndP);
+                domainStatsMap.delete(dAndP);
+            }
+        });
+        judgeToSaveCache();
+    }, 6000 || 3600000 * 12);
 })();

@@ -8,7 +8,9 @@ const packageJsonInfo = require('./package.json');
 const packageJsonInfoStr = JSON.stringify(packageJsonInfo, null, 2);
 const curVersion = packageJsonInfo.version;
 const curBranch = shell.exec('git branch --show-current', { silent: true }).trim();
-let [major = 0, minor = 0, build = 0, tag, tagVersion = 0] = curVersion.split(/[.-]/);
+let [major = 0, minor = 0, build = 0, tag, tagVersion = 0] = curVersion
+    .replace(/(\d)-([^\d.]+)/, '$1.$2')
+    .split(/[.]/);
 
 if (masterBranchs.includes(curBranch)) {
     if (!tag) build++;
@@ -16,11 +18,12 @@ if (masterBranchs.includes(curBranch)) {
 } else {
     if (curBranch === tag) tagVersion++;
     else tagVersion = 0;
+    if (!tag) build++;
     tag = curBranch;
 }
 
 let newVersion = `${major}.${minor}.${build}`;
-if (tag) newVersion += `-${tag}-${tagVersion}`;
+if (tag) newVersion += `-${tag}.${tagVersion}`;
 
 packageJsonInfo.version = newVersion;
 fs.writeFileSync('./package.json', JSON.stringify(packageJsonInfo, null, 2));
