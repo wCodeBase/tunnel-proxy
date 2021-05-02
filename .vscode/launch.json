@@ -17,6 +17,7 @@
                 "-c",
                 "config.js"
             ],
+            "runtimeArgs": ["--preserve-symlinks"],
             "cwd": "${workspaceFolder}",
             "protocol": "inspector",
         },

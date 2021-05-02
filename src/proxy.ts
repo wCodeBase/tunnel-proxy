@@ -8,6 +8,7 @@ const MAX_HTTP_URL_LENGTH = 10000;
 const CODE_SPACE = ' '.charCodeAt(0);
 const PACKAGE_TAIL = Buffer.from('\r\n\r\n');
 const CONNECTED_FEEDBACK = Buffer.from('HTTP/1.1 200 Connection Established\r\n\r\n');
+const CONNECT_FAILED_FEEDBACK = Buffer.from('HTTP/1.1 502 Bad Gateway\r\n\r\n');
 
 const isConnectedMethod = (data: Buffer) =>
     String(data.slice(0, CODE_CONNECT.length)) === CODE_CONNECT;
@@ -73,15 +74,35 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
     };
     const socks: (Socket | null)[] = dests.map((v, i) => {
         let blockDataCount = 0;
-        let raceStartAt = -Infinity;
+        let raceStartAt = 0;
         const sock = net.connect(v.port, v.ip, () => {
             if (connectData && !v.notProxy) {
                 sock.write(connectData);
                 blockDataCount++;
             } else {
-                dataCache.forEach((d) => sock.write(d));
+                dataCache.forEach((d) => {
+                    if (v.notProxy && v.ip === domain) {
+                        // Remove schema and domain info in http request to avoid 404 error in "python3 -m http.server"
+                        const spaceAt = d.indexOf(CODE_SPACE);
+                        if (spaceAt > 0) {
+                            const secondSpaceAt = d.indexOf(CODE_SPACE, spaceAt + 1);
+                            if (secondSpaceAt >= 0) {
+                                const url = String(d.slice(spaceAt + 1, secondSpaceAt)).replace(
+                                    /https?:\/\/[^/]*/,
+                                    '',
+                                );
+                                d = Buffer.concat([
+                                    d.slice(0, spaceAt + 1),
+                                    Buffer.from(url),
+                                    d.slice(secondSpaceAt),
+                                ]);
+                            }
+                        }
+                    }
+                    sock.write(d);
+                });
                 connectedSocks.push(sock);
-                raceStartAt = Date.now();
+                if (!raceStartAt) raceStartAt = Date.now();
             }
         });
         const fail = () => {
@@ -108,7 +129,7 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
                 if (blockDataCount <= 0) {
                     dataCache.forEach((d) => sock.write(d));
                     connectedSocks.push(sock);
-                    raceStartAt = Date.now();
+                    if (!raceStartAt) raceStartAt = Date.now();
                 }
                 return;
             }
@@ -179,14 +200,20 @@ function sockConnect(
      * Use this map to store domain-sock mapping relations;
      */
     const restDestSockMap = isConnect ? null : new Map([[dAndP, destSock]]);
-    const genDestEnd = (dAndP: string) => () => {
-        if (!restDestSockMap) sock.destroy();
+    const genDestEnd = (dAndP: string, isError = false) => () => {
+        const destory = () => {
+            if (isError) sock.write(CONNECT_FAILED_FEEDBACK);
+            sock.destroy();
+        };
+        if (!restDestSockMap) destory();
         else {
             restDestSockMap.get(dAndP)?.destroy();
             restDestSockMap.delete(dAndP);
+            if (!restDestSockMap.size) destory();
         }
     };
     const destEnd = genDestEnd(dAndP);
+    const destError = genDestEnd(dAndP, true);
     const end = () => {
         if (!restDestSockMap) destSock.destroy();
         else Array.from(restDestSockMap.values()).forEach((s) => s.destroy());
@@ -196,7 +223,7 @@ function sockConnect(
     };
     const bindSock = (rSock: RaceSocket) => {
         rSock.on('end', destEnd);
-        rSock.on('error', destEnd);
+        rSock.on('error', destError);
         rSock.on('data', onDataBack);
     };
     bindSock(destSock);
@@ -271,6 +298,7 @@ export function startProxy(): void {
         sock.on('end', () => {
             sockIpHostSet.delete(strIpHost);
         });
+        // TODO: socks5 proxy
         sock.once('data', async (data) => {
             const domainAndPort = parseDomainAndPort(data);
             if (!domainAndPort) {
