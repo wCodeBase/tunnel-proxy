@@ -37,3 +37,6 @@ export interface DomainStatDesc {
 export interface CacheData {
     domainReqCountsDec?: DomainStatDesc[];
 }
+
+export class ErrorRaceFail extends Error {}
+export class ErrorIdleTimeout extends Error {}

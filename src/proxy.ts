@@ -1,4 +1,10 @@
-import { diagnoseDomain, tryRestoreCache, trySaveCache } from './stats/channelDiagnostic';
+import { ErrorRaceFail, ErrorIdleTimeout, DomainChannelStats } from './stats/types';
+import {
+    diagnoseDomain,
+    tryRestoreCache,
+    trySaveCache,
+    notExactlyGoodStats,
+} from './stats/channelDiagnostic';
 import net, { Socket } from 'net';
 import { Settings, Target } from './common/setting';
 
@@ -49,9 +55,14 @@ function parseDomainAndPort(data: Buffer) {
  * 通过比较第一个包的响应时间选取最快的路线
  * @param connectData 当请求的方法是CONNECT时需传递
  */
-function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): RaceSocket {
-    const haveProxy = !!dests.find((v) => !v.notProxy);
+function raceConnect(
+    dests: DomainChannelStats[],
+    domain: string,
+    connectData?: Buffer,
+): RaceSocket {
+    const haveProxy = !!dests.find((v) => !v.target.notProxy);
     let finished = false;
+    let maxRecvCount = 0;
     const dataCache: Buffer[] = [];
     let msock: Socket | null = null;
     let connectedSocks: Socket[] = [];
@@ -81,7 +92,8 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
         connectCb?.();
         return win;
     };
-    const socks: (Socket | null)[] = dests.map((v, i) => {
+    const sockMapper = (domainStats: DomainChannelStats, i: number) => {
+        const v = domainStats.target;
         let retryCount = 0;
         const reacRetry = async () => {
             await new Promise((r) => setTimeout(r, Settings.inSocketRetryDelay));
@@ -126,6 +138,7 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
             });
             const onData = (data: Buffer) => {
                 recvCount++;
+                maxRecvCount = Math.max(recvCount, maxRecvCount);
                 if (blockDataCount) {
                     // TODO: 解析代理返回的错误
                     blockDataCount--;
@@ -139,7 +152,12 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
                     }
                     return;
                 }
-                if (msock) return;
+                if (msock) {
+                    if (msock === sock) sock.removeListener('data', onData);
+                    if (msock !== sock && domainStats.status === 'good')
+                        notExactlyGoodStats.feedback(true, domain);
+                    return;
+                }
                 const mCache = raceRecvDataMap.get(sock);
                 if (mCache) {
                     mCache.push(data);
@@ -148,18 +166,27 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
                 let cost = Date.now() - raceStartAt;
                 const costBonused = v.notProxy && haveProxy ? Settings.proxyCostBonus : 0;
                 cost += costBonused;
-                if (cost >= minRacingCost) fail();
+                if (cost >= minRacingCost) fail(new ErrorRaceFail('Error: race failed'));
                 else {
                     minRacingCost = cost;
                     minRecvSock = sock;
                     raceRecvDataMap.set(sock, [data]);
                     minCancelCb?.();
                     minCancelCb = fail;
-                    if (!judgeWin(false) && judgeTimeOut === -Infinity)
+                    if (!judgeWin(false) && judgeTimeOut === -Infinity) {
                         judgeTimeOut = Number(setTimeout(judgeWin, costBonused));
+                        if (v.notProxy && cost < Settings.goodSocketTimeout)
+                            notExactlyGoodStats.feedback(false, domain);
+                        else if (dests.find((v) => v.status === 'good'))
+                            notExactlyGoodStats.feedback(true, domain);
+                    }
                 }
             };
             const fail = (error?: Error) => {
+                // TODO: Maybe need to verify error type.
+                if (v.notProxy && domainStats.status === 'good') {
+                    notExactlyGoodStats.feedback(true, domain);
+                }
                 if (minRecvSock === sock) {
                     clearTimeout(judgeTimeOut);
                     judgeTimeOut = -Infinity;
@@ -170,7 +197,7 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
                 sock.destroy();
                 socks[i] = null;
                 connectedSocks = connectedSocks.filter((v) => v !== sock);
-                if (!socks.find((v) => v)) {
+                if (msock === sock || !socks.find((v) => v)) {
                     cbMap['error']?.();
                     finished = true;
                 }
@@ -183,18 +210,39 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
             });
             sock.on('data', onData);
             sock.on('error', fail);
-            sock.setTimeout(Settings.socketTimeout, fail);
+            // TODO: checkout whether idle websocket trigger timeout or not.
+            sock.setTimeout(Settings.socketIdleTimeout, () =>
+                fail(new ErrorIdleTimeout('Error: socket time out')),
+            );
             return sock;
         };
         return createSock();
-    });
+    };
+    const socks: (Socket | null)[] = dests.map(sockMapper);
+    /**
+     * If proxies exist and only one taget passed，means the only target is good.
+     * Here to do correction if the good target is not good exactly.
+     */
+    if (Settings.proxys.length && dests.length === 1 && dests[0].target.notProxy) {
+        setTimeout(() => {
+            if (msock || finished) return;
+            notExactlyGoodStats.feedback(true, domain);
+            const { port, dAndP } = dests[0];
+            Settings.proxys.forEach((target) =>
+                socks.push(
+                    sockMapper(new DomainChannelStats(domain, port, dAndP, target), socks.length),
+                ),
+            );
+        }, Settings.goodSocketTimeout);
+    }
+
     setTimeout(() => {
         if (!msock) {
             socks.forEach((s) => s?.destroy());
             cbMap['error']?.();
             finished = true;
         }
-    }, Settings.socketTimeout);
+    }, Settings.socketConnectTimeout);
     return {
         write(data) {
             if (!msock) {
@@ -214,7 +262,7 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
 
 function sockConnect(
     sock: Socket,
-    targets: Target[],
+    targets: DomainChannelStats[],
     firstData: Buffer,
     domain: string,
     port: number,
@@ -226,7 +274,7 @@ function sockConnect(
     const dAndP = domain + ':' + port;
     const isConnect = isConnectedMethod(firstData);
     const connectData = isConnect ? firstData : undefined;
-    const destSock = raceConnect(targets, connectData, domain);
+    const destSock = raceConnect(targets, domain, connectData);
     /**
      * ${isConnect === false} means this is a http (not https) proxy request, which may recieve requests for multi domain.
      * In this case, it's necessary to create multi destSocks for different domain.
@@ -278,8 +326,10 @@ function sockConnect(
                     let sock = restDestSockMap.get(dAndP);
                     if (!sock) {
                         const target = getDomainProxy(domain);
-                        const targets = target ? [target] : await diagnoseDomain(domain, port);
-                        sock = raceConnect(targets, undefined, domain);
+                        const domainStats = target
+                            ? [new DomainChannelStats(domain, port, dAndP, target)]
+                            : await diagnoseDomain(domain, port);
+                        sock = raceConnect(domainStats, domain, undefined);
                         restDestSockMap.set(dAndP, sock);
                         bindSock(sock);
                     }
@@ -343,7 +393,14 @@ export function startProxy(): void {
             }
             const [domain, port] = domainAndPort;
             const target = getDomainProxy(domain);
-            if (target) sockConnect(sock, [target], data, domain, port);
+            if (target)
+                sockConnect(
+                    sock,
+                    [new DomainChannelStats(domain, port, `${domain}:${port}`, target)],
+                    data,
+                    domain,
+                    port,
+                );
             else {
                 const targets = await diagnoseDomain(domain, port);
                 sockConnect(sock, targets, data, domain, port);
