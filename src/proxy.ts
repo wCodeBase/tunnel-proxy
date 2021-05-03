@@ -22,7 +22,6 @@ type RaceSocket = Pick<Socket, 'destroy'> & {
     on: typeof RaceSocketOn;
     write: (data: Buffer) => void;
 };
-const closedSockSet = new Set();
 
 function parseHttpUrl(data: Buffer) {
     const start = data.slice(0, MAX_HTTP_METHOD_LENGTH).indexOf(CODE_SPACE);
@@ -60,6 +59,7 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
     let minCancelCb: (() => void) | null = null;
     let judgeTimeOut = -Infinity;
     const judgeWin = (isTimeout = true) => {
+        if (msock) return;
         const win = isTimeout || socks.filter((v) => v).length === 1;
         if (win && minRecvSock) {
             msock = minRecvSock;
@@ -120,7 +120,6 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
             if (!socks.find((v) => v)) cbMap['error']?.();
         };
         sock.on('end', () => {
-            closedSockSet.add(sock);
             if (sock === msock) cbMap['end']?.();
         });
         sock.on('data', (data) => {
@@ -141,7 +140,8 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
                 return;
             }
             let cost = Date.now() - raceStartAt;
-            if (v.notProxy && haveProxy) cost += Settings.proxyCostBonus;
+            const costBonused = v.notProxy && haveProxy ? Settings.proxyCostBonus : 0;
+            cost += costBonused;
             if (cost >= minRacingCost) fail();
             else {
                 minRacingCost = cost;
@@ -150,7 +150,7 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
                 minCancelCb?.();
                 minCancelCb = fail;
                 if (!judgeWin(false) && judgeTimeOut === -Infinity)
-                    judgeTimeOut = Number(setTimeout(judgeWin, cost));
+                    judgeTimeOut = Number(setTimeout(judgeWin, costBonused));
             }
         });
         sock.on('error', fail);
