@@ -113,7 +113,8 @@ const judgeToSaveCacheDebounced = debounce(judgeToSaveCache, 2000);
 
 /**
  * Use ping, tcp-ping tools to test targets and feedBack targets
- * If all target tested, return best two target
+ * If all target tested, return best two target.
+ * Test will be skipped if no proxy defined in Setting.proxys.
  * TODO: auto rediagnose
  * TODO: spread test on next tunnel-proxy node
  */
@@ -143,7 +144,7 @@ export const diagnoseDomain = async (
             const mStatsList = [...statsList];
             const ips = await resolveDomainIps(domain);
             if (ips.length) {
-                if (!forceSync && Settings.pingAsync) {
+                if (!Settings.proxys.length || (!forceSync && Settings.pingAsync)) {
                     statsList.push(
                         new DomainChannelStats(
                             domain,
@@ -154,6 +155,7 @@ export const diagnoseDomain = async (
                         ),
                     );
                     r(undefined);
+                    if (!Settings.proxys.length) return;
                 }
                 const pingResList = await Promise.all(ips.map((ip) => pingDomain(ip.address)));
                 const localStatsis: DomainChannelStats[] = [];

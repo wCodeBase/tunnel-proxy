@@ -49,6 +49,7 @@ function parseDomainAndPort(data: Buffer) {
  * @param connectData 当请求的方法是CONNECT时需传递
  */
 function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): RaceSocket {
+    const haveProxy = !!dests.find((v) => !v.notProxy);
     const dataCache: Buffer[] = [];
     let msock: Socket | null = null;
     let connectedSocks: Socket[] = [];
@@ -140,7 +141,7 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
                 return;
             }
             let cost = Date.now() - raceStartAt;
-            if (v.notProxy && dests.find((v) => !!v.notProxy)) cost += Settings.proxyCostBonus;
+            if (v.notProxy && haveProxy) cost += Settings.proxyCostBonus;
             if (cost >= minRacingCost) fail();
             else {
                 minRacingCost = cost;
