@@ -8,6 +8,7 @@ const MAX_HTTP_URL_LENGTH = 10000;
 const CODE_SPACE = ' '.charCodeAt(0);
 const PACKAGE_TAIL = Buffer.from('\r\n\r\n');
 const CONNECTED_FEEDBACK = Buffer.from('HTTP/1.1 200 Connection Established\r\n\r\n');
+const CONNECTION_ESTABLISHED = Buffer.from('Connection Established');
 const CONNECT_FAILED_FEEDBACK = Buffer.from('HTTP/1.1 502 Bad Gateway\r\n\r\n');
 
 const isConnectedMethod = (data: Buffer) =>
@@ -15,6 +16,7 @@ const isConnectedMethod = (data: Buffer) =>
 
 function RaceSocketOn(event: 'end', listener: () => void): void;
 function RaceSocketOn(event: 'error', listener: () => void): void;
+function RaceSocketOn(event: 'connect', listener: () => void): void;
 // @ts-ignore
 function RaceSocketOn(event: 'data', listener: (data: Buffer) => void): void;
 
@@ -49,10 +51,15 @@ function parseDomainAndPort(data: Buffer) {
  */
 function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): RaceSocket {
     const haveProxy = !!dests.find((v) => !v.notProxy);
+    let finished = false;
     const dataCache: Buffer[] = [];
     let msock: Socket | null = null;
     let connectedSocks: Socket[] = [];
     const cbMap: { [index: string]: (...args: Buffer[]) => void } = {};
+    let connectCb: null | (() => void) = () => {
+        cbMap['connect']?.();
+        connectCb = null;
+    };
     const raceRecvDataMap = new Map<Socket, Buffer[]>();
     let minRacingCost = Infinity;
     let minRecvSock: Socket | null = null;
@@ -71,96 +78,121 @@ function raceConnect(dests: Target[], connectData?: Buffer, domain?: string): Ra
             );
             raceRecvDataMap.get(msock)?.forEach((d) => cbMap['data']?.(d));
         }
+        connectCb?.();
         return win;
     };
     const socks: (Socket | null)[] = dests.map((v, i) => {
-        let blockDataCount = 0;
-        let raceStartAt = 0;
-        const sock = net.connect(v.port, v.ip, () => {
-            if (connectData && !v.notProxy) {
-                sock.write(connectData);
-                blockDataCount++;
-            } else {
-                dataCache.forEach((d) => {
-                    if (v.notProxy && v.ip === domain) {
-                        // Remove schema and domain info in http request to avoid 404 error in "python3 -m http.server"
-                        const spaceAt = d.indexOf(CODE_SPACE);
-                        if (spaceAt > 0) {
-                            const secondSpaceAt = d.indexOf(CODE_SPACE, spaceAt + 1);
-                            if (secondSpaceAt >= 0) {
-                                const url = String(d.slice(spaceAt + 1, secondSpaceAt)).replace(
-                                    /https?:\/\/[^/]*/,
-                                    '',
-                                );
-                                d = Buffer.concat([
-                                    d.slice(0, spaceAt + 1),
-                                    Buffer.from(url),
-                                    d.slice(secondSpaceAt),
-                                ]);
+        let retryCount = 0;
+        const reacRetry = async () => {
+            await new Promise((r) => setTimeout(r, Settings.inSocketRetryDelay));
+            retryCount++;
+            if (msock || minRecvSock || retryCount > Settings.inSocketMaxRetry || finished) return;
+            socks[i] = createSock();
+        };
+        const createSock = () => {
+            let blockDataCount = 0;
+            let raceStartAt = 0;
+            let recvCount = 0;
+            const sock = net.connect(v.port, v.ip, () => {
+                if (connectData) {
+                    blockDataCount++;
+                    if (!v.notProxy) sock.write(connectData);
+                    else onData(CONNECTED_FEEDBACK);
+                } else {
+                    dataCache.forEach((d) => {
+                        if (v.notProxy && v.ip === domain) {
+                            // Remove schema and domain info in http request to avoid 404 error in "python3 -m http.server"
+                            const spaceAt = d.indexOf(CODE_SPACE);
+                            if (spaceAt > 0) {
+                                const secondSpaceAt = d.indexOf(CODE_SPACE, spaceAt + 1);
+                                if (secondSpaceAt >= 0) {
+                                    const url = String(d.slice(spaceAt + 1, secondSpaceAt)).replace(
+                                        /https?:\/\/[^/]*/,
+                                        '',
+                                    );
+                                    d = Buffer.concat([
+                                        d.slice(0, spaceAt + 1),
+                                        Buffer.from(url),
+                                        d.slice(secondSpaceAt),
+                                    ]);
+                                }
                             }
                         }
-                    }
-                    sock.write(d);
-                });
-                connectedSocks.push(sock);
-                if (!raceStartAt) raceStartAt = Date.now();
-            }
-        });
-        const fail = () => {
-            if (minRecvSock === sock) {
-                clearTimeout(judgeTimeOut);
-                judgeTimeOut = -Infinity;
-                minCancelCb = null;
-                minRecvSock = null;
-                minRacingCost = Infinity;
-            }
-            sock.destroy();
-            socks[i] = null;
-            connectedSocks = connectedSocks.filter((v) => v !== sock);
-            if (!socks.find((v) => v)) cbMap['error']?.();
-        };
-        sock.on('end', () => {
-            if (sock === msock) cbMap['end']?.();
-        });
-        sock.on('data', (data) => {
-            if (blockDataCount) {
-                // TODO: 解析代理返回的错误
-                blockDataCount--;
-                if (blockDataCount <= 0) {
-                    dataCache.forEach((d) => sock.write(d));
+                        sock.write(d);
+                    });
                     connectedSocks.push(sock);
                     if (!raceStartAt) raceStartAt = Date.now();
                 }
-                return;
-            }
-            if (msock) return;
-            const mCache = raceRecvDataMap.get(sock);
-            if (mCache) {
-                mCache.push(data);
-                return;
-            }
-            let cost = Date.now() - raceStartAt;
-            const costBonused = v.notProxy && haveProxy ? Settings.proxyCostBonus : 0;
-            cost += costBonused;
-            if (cost >= minRacingCost) fail();
-            else {
-                minRacingCost = cost;
-                minRecvSock = sock;
-                raceRecvDataMap.set(sock, [data]);
-                minCancelCb?.();
-                minCancelCb = fail;
-                if (!judgeWin(false) && judgeTimeOut === -Infinity)
-                    judgeTimeOut = Number(setTimeout(judgeWin, costBonused));
-            }
-        });
-        sock.on('error', fail);
-        sock.setTimeout(Settings.socketTimeout, fail);
-        return sock;
+            });
+            const onData = (data: Buffer) => {
+                recvCount++;
+                if (blockDataCount) {
+                    // TODO: 解析代理返回的错误
+                    blockDataCount--;
+                    if (connectCb && data.includes(CONNECTION_ESTABLISHED)) {
+                        connectCb();
+                    }
+                    if (blockDataCount <= 0) {
+                        dataCache.forEach((d) => sock.write(d));
+                        connectedSocks.push(sock);
+                        if (!raceStartAt) raceStartAt = Date.now();
+                    }
+                    return;
+                }
+                if (msock) return;
+                const mCache = raceRecvDataMap.get(sock);
+                if (mCache) {
+                    mCache.push(data);
+                    return;
+                }
+                let cost = Date.now() - raceStartAt;
+                const costBonused = v.notProxy && haveProxy ? Settings.proxyCostBonus : 0;
+                cost += costBonused;
+                if (cost >= minRacingCost) fail();
+                else {
+                    minRacingCost = cost;
+                    minRecvSock = sock;
+                    raceRecvDataMap.set(sock, [data]);
+                    minCancelCb?.();
+                    minCancelCb = fail;
+                    if (!judgeWin(false) && judgeTimeOut === -Infinity)
+                        judgeTimeOut = Number(setTimeout(judgeWin, costBonused));
+                }
+            };
+            const fail = (error?: Error) => {
+                if (minRecvSock === sock) {
+                    clearTimeout(judgeTimeOut);
+                    judgeTimeOut = -Infinity;
+                    minCancelCb = null;
+                    minRecvSock = null;
+                    minRacingCost = Infinity;
+                }
+                sock.destroy();
+                socks[i] = null;
+                connectedSocks = connectedSocks.filter((v) => v !== sock);
+                if (!socks.find((v) => v)) {
+                    cbMap['error']?.();
+                    finished = true;
+                }
+            };
+            sock.on('end', () => {
+                if (sock === msock) {
+                    cbMap['end']?.();
+                    finished = true;
+                } else if (!recvCount) reacRetry();
+            });
+            sock.on('data', onData);
+            sock.on('error', fail);
+            sock.setTimeout(Settings.socketTimeout, fail);
+            return sock;
+        };
+        return createSock();
     });
     setTimeout(() => {
         if (!msock) {
             socks.forEach((s) => s?.destroy());
             cbMap['error']?.();
+            finished = true;
         }
     }, Settings.socketTimeout);
     return {
@@ -223,6 +255,9 @@ function sockConnect(
         sock.write(data);
     };
     const bindSock = (rSock: RaceSocket) => {
+        rSock.on('connect', () => {
+            sock.write(CONNECTED_FEEDBACK);
+        });
         rSock.on('end', destEnd);
         rSock.on('error', destError);
         rSock.on('data', onDataBack);
@@ -259,8 +294,7 @@ function sockConnect(
     });
     sock.on('end', end);
     sock.on('error', end);
-    if (connectData) sock.write(CONNECTED_FEEDBACK);
-    else destSock.write(firstData);
+    if (!connectData) destSock.write(firstData);
 }
 
 const getDomainProxy = (() => {

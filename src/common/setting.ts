@@ -6,6 +6,8 @@ export interface Target {
 }
 export const Settings = {
     socketTimeout: 15000,
+    inSocketMaxRetry: 3,
+    inSocketRetryDelay: 300,
     proxys: [] as Target[],
     port: 8008,
     host: '0.0.0.0',
