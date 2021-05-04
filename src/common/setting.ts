@@ -7,6 +7,7 @@ export interface Target {
 export const Settings = {
     socketConnectTimeout: 15000,
     socketIdleTimeout: 4000,
+    socketIdleReverifyWaitMilli: 30000,
     goodSocketTimeout: 300,
     notExactlyGoodCountLimit: 3.5,
     inSocketMaxRetry: 3,

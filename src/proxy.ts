@@ -7,6 +7,8 @@ import {
 } from './stats/channelDiagnostic';
 import net, { Socket } from 'net';
 import { Settings, Target } from './common/setting';
+import nFetch from 'node-fetch';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 const CODE_CONNECT = 'CONNECT';
 const MAX_HTTP_METHOD_LENGTH = 10;
@@ -58,6 +60,7 @@ function parseDomainAndPort(data: Buffer) {
 function raceConnect(
     dests: DomainChannelStats[],
     domain: string,
+    port: number,
     connectData?: Buffer,
 ): RaceSocket {
     const haveProxy = !!dests.find((v) => !v.target.notProxy);
@@ -105,6 +108,7 @@ function raceConnect(
             let blockDataCount = 0;
             let raceStartAt = 0;
             let recvCount = 0;
+            let lastDataAt = 0;
             const sock = net.connect(v.port, v.ip, () => {
                 if (connectData) {
                     blockDataCount++;
@@ -137,6 +141,7 @@ function raceConnect(
                 }
             });
             const onData = (data: Buffer) => {
+                lastDataAt = Date.now();
                 recvCount++;
                 maxRecvCount = Math.max(recvCount, maxRecvCount);
                 if (blockDataCount) {
@@ -182,8 +187,30 @@ function raceConnect(
                     }
                 }
             };
-            const fail = (error?: Error) => {
-                // TODO: Maybe need to verify error type.
+            const fail = async (error?: Error) => {
+                if (finished) return;
+                // If error type is ErrorIdleTimeout, use another request to verify network.
+                if (error instanceof ErrorIdleTimeout && recvCount >= 3) {
+                    if (lastDataAt > Date.now() - Settings.socketIdleReverifyWaitMilli) return;
+                    const target = domainStats.target;
+                    const agent = target.notProxy
+                        ? undefined
+                        : new HttpsProxyAgent({ port: target.port, host: target.ip });
+                    const fetched = await nFetch(
+                        `${connectData ? 'https' : 'http'}://${domain}${
+                            [80, 443].includes(port) ? '' : port
+                        }`,
+                        {
+                            method: 'GET',
+                            redirect: 'manual',
+                            timeout: 2000,
+                            agent,
+                        },
+                    )
+                        .then((res) => !!res)
+                        .catch(() => false);
+                    if (fetched) return;
+                }
                 if (v.notProxy && domainStats.status === 'good') {
                     notExactlyGoodStats.feedback(true, domain);
                 }
@@ -210,10 +237,9 @@ function raceConnect(
             });
             sock.on('data', onData);
             sock.on('error', fail);
-            // TODO: checkout whether idle websocket trigger timeout or not.
-            sock.setTimeout(Settings.socketIdleTimeout, () =>
-                fail(new ErrorIdleTimeout('Error: socket time out')),
-            );
+            sock.setTimeout(Settings.socketIdleTimeout, () => {
+                fail(new ErrorIdleTimeout('Error: socket time out'));
+            });
             return sock;
         };
         return createSock();
@@ -251,6 +277,7 @@ function raceConnect(
             } else msock.write(data);
         },
         destroy() {
+            finished = true;
             msock?.destroy();
             socks.forEach((s) => s?.destroy());
         },
@@ -268,13 +295,14 @@ function sockConnect(
     port: number,
 ) {
     if (!targets.length) {
+        sock.write(CONNECT_FAILED_FEEDBACK);
         sock.destroy();
         return;
     }
     const dAndP = domain + ':' + port;
     const isConnect = isConnectedMethod(firstData);
     const connectData = isConnect ? firstData : undefined;
-    const destSock = raceConnect(targets, domain, connectData);
+    const destSock = raceConnect(targets, domain, port, connectData);
     /**
      * ${isConnect === false} means this is a http (not https) proxy request, which may recieve requests for multi domain.
      * In this case, it's necessary to create multi destSocks for different domain.
@@ -329,7 +357,7 @@ function sockConnect(
                         const domainStats = target
                             ? [new DomainChannelStats(domain, port, dAndP, target)]
                             : await diagnoseDomain(domain, port);
-                        sock = raceConnect(domainStats, domain, undefined);
+                        sock = raceConnect(domainStats, domain, port, undefined);
                         restDestSockMap.set(dAndP, sock);
                         bindSock(sock);
                     }
