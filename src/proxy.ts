@@ -64,6 +64,7 @@ function raceConnect(
     connectData?: Buffer,
 ): RaceSocket {
     const haveProxy = !!dests.find((v) => !v.target.notProxy);
+    const minCountShouldRecv = connectData ? 2 : 0;
     let finished = false;
     let maxRecvCount = 0;
     const dataCache: Buffer[] = [];
@@ -108,7 +109,7 @@ function raceConnect(
             let blockDataCount = 0;
             let raceStartAt = 0;
             let recvCount = 0;
-            let lastDataAt = 0;
+            let lastTimeoutVerifyAt = 0;
             const sock = net.connect(v.port, v.ip, () => {
                 if (connectData) {
                     blockDataCount++;
@@ -141,7 +142,6 @@ function raceConnect(
                 }
             });
             const onData = (data: Buffer) => {
-                lastDataAt = Date.now();
                 recvCount++;
                 maxRecvCount = Math.max(recvCount, maxRecvCount);
                 if (blockDataCount) {
@@ -190,8 +190,10 @@ function raceConnect(
             const fail = async (error?: Error) => {
                 if (finished) return;
                 // If error type is ErrorIdleTimeout, use another request to verify network.
-                if (error instanceof ErrorIdleTimeout && recvCount >= 3) {
-                    if (lastDataAt > Date.now() - Settings.socketIdleReverifyWaitMilli) return;
+                if (error instanceof ErrorIdleTimeout && recvCount >= minCountShouldRecv) {
+                    if (lastTimeoutVerifyAt > Date.now() - Settings.socketIdleReverifyWaitMilli)
+                        return;
+                    lastTimeoutVerifyAt = Date.now();
                     const target = domainStats.target;
                     const agent = target.notProxy
                         ? undefined

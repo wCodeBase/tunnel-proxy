@@ -15,7 +15,7 @@ export const Settings = {
     proxys: [] as Target[],
     port: 8008,
     host: '0.0.0.0',
-    proxyCostBonus: 30,
+    proxyCostBonus: 10,
     maxPkgLossPct: 50,
     maxGoodLatency: 150,
     pingAsync: true,
