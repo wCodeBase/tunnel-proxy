@@ -331,9 +331,10 @@ function sockConnect(
         sock.write(data);
     };
     const bindSock = (rSock: RaceSocket) => {
-        rSock.on('connect', () => {
-            sock.write(CONNECTED_FEEDBACK);
-        });
+        if (isConnect)
+            rSock.on('connect', () => {
+                sock.write(CONNECTED_FEEDBACK);
+            });
         rSock.on('end', destEnd);
         rSock.on('error', destError);
         rSock.on('data', onDataBack);
