@@ -5,11 +5,17 @@ export interface Target {
     fixedDomains?: (string | RegExp)[];
 }
 export const Settings = {
-    socketTimeout: 15000,
+    socketConnectTimeout: 15000,
+    socketIdleTimeout: 4000,
+    socketIdleReverifyWaitMilli: 30000,
+    goodSocketTimeout: 300,
+    notExactlyGoodCountLimit: 3.5,
+    inSocketMaxRetry: 3,
+    inSocketRetryDelay: 300,
     proxys: [] as Target[],
     port: 8008,
     host: '0.0.0.0',
-    proxyCostBonus: 30,
+    proxyCostBonus: 10,
     maxPkgLossPct: 50,
     maxGoodLatency: 150,
     pingAsync: true,

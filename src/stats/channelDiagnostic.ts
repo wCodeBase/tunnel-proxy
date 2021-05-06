@@ -26,6 +26,26 @@ import isOnline from 'is-online';
  */
 export const domainStatsMap = new Map<string, DomainChannelStats[]>();
 
+export const notExactlyGoodStats = (() => {
+    const notGoodDomainMap = new Map<string, number>();
+    return {
+        countNotGood(domain: string) {
+            return notGoodDomainMap.get(domain) || 0;
+        },
+        feedback(notGood: boolean, domain: string) {
+            if (!notGood && !notGoodDomainMap.has(domain)) return;
+            let stats = notGoodDomainMap.get(domain) || 0;
+            if (notGood) stats++;
+            else stats -= 0.25;
+            if (stats < 0) notGoodDomainMap.delete(domain);
+            else notGoodDomainMap.set(domain, stats);
+        },
+        clear() {
+            notGoodDomainMap.clear();
+        },
+    };
+})();
+
 /**
  * Map to count domain request times and last active time;
  *
@@ -113,7 +133,8 @@ const judgeToSaveCacheDebounced = debounce(judgeToSaveCache, 2000);
 
 /**
  * Use ping, tcp-ping tools to test targets and feedBack targets
- * If all target tested, return best two target
+ * If all target tested, return best two target.
+ * Test will be skipped if no proxy defined in Setting.proxys.
  * TODO: auto rediagnose
  * TODO: spread test on next tunnel-proxy node
  */
@@ -143,7 +164,7 @@ export const diagnoseDomain = async (
             const mStatsList = [...statsList];
             const ips = await resolveDomainIps(domain);
             if (ips.length) {
-                if (!forceSync && Settings.pingAsync) {
+                if (!Settings.proxys.length || (!forceSync && Settings.pingAsync)) {
                     statsList.push(
                         new DomainChannelStats(
                             domain,
@@ -154,6 +175,7 @@ export const diagnoseDomain = async (
                         ),
                     );
                     r(undefined);
+                    if (!Settings.proxys.length) return;
                 }
                 const pingResList = await Promise.all(ips.map((ip) => pingDomain(ip.address)));
                 const localStatsis: DomainChannelStats[] = [];
@@ -176,9 +198,12 @@ export const diagnoseDomain = async (
                         stats.latency = res.time === 'unknown' ? Infinity : res.time;
                         stats.pkgLostPct = lossPct;
                         stats.status =
-                            lossPct > 0
+                            lossPct > 0 ||
+                            notExactlyGoodStats.countNotGood(domain) >
+                                Settings.notExactlyGoodCountLimit
                                 ? 'bad'
-                                : stats.latency < Settings.maxGoodLatency
+                                : stats.latency < Settings.maxGoodLatency &&
+                                  !notExactlyGoodStats.countNotGood(domain)
                                 ? 'good'
                                 : 'work';
                         localStatsis.push(stats);
@@ -210,12 +235,16 @@ export const diagnoseDomain = async (
     }
 
     domainStatsMap.set(dAndP, statsList);
-
+    const notGoodCount = notExactlyGoodStats.countNotGood(domain);
     // pick stats
-    if (statsList[0].status === 'good') return [statsList[0].target];
-    const targets = statsList.filter((s) => s.status !== 'bad').map((s) => s.target);
+    if (statsList[0].status === 'good' && !notGoodCount) return [statsList[0]];
+    const filteredStats =
+        notGoodCount < Settings.notExactlyGoodCountLimit
+            ? statsList.filter((s) => s.status !== 'bad')
+            : statsList.filter((s) => !s.target.notProxy);
+    const targets = filteredStats.length ? filteredStats : statsList;
     if (targets.length) return targets;
-    return statsList.map((s) => s.target);
+    return statsList;
 };
 
 // TODO:
@@ -379,6 +408,7 @@ const verifyTtl = async (
         const ipList = getIpAddressList();
         if (lastIpList) {
             if (JSON.stringify(lastIpList) !== JSON.stringify(ipList)) {
+                notExactlyGoodStats.clear();
                 cycleRefreshTtl(true, true);
             }
         }
