@@ -1,6 +1,8 @@
+import { logger } from './logger';
 import { deflate, unzip } from 'zlib';
-import { Settings } from './setting';
+import { ErrorLevel, Settings } from './setting';
 import { networkInterfaces } from 'os';
+import { Socket } from 'net';
 
 const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
 export function genRandomString(length: number) {
@@ -67,7 +69,13 @@ export const realTimeout = (() => {
         try {
             cb();
         } catch (e) {
-            console.log('error in realTimeout cb: ', e);
+            logger.error(
+                ErrorLevel.important,
+                undefined,
+                undefined,
+                'error in realTimeout cb: ',
+                e,
+            );
         }
     };
     const deamonCb = () => {
@@ -121,3 +129,18 @@ export const batchFilter = async <T>(
     );
     return res;
 };
+
+export const writeSocketForAck = (sock: Socket, data: Buffer, timeout = 2000) =>
+    new Promise<Buffer>((res, rej) => {
+        const onData = (data: Buffer) => {
+            clearTimeout(handler);
+            sock.removeListener('data', onData);
+            res(data);
+        };
+        sock.on('data', onData);
+        sock.write(data);
+        const handler = setTimeout(() => {
+            sock.removeListener('data', onData);
+            rej('writeSocketForAck timeout');
+        }, timeout);
+    });

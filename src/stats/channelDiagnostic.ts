@@ -1,10 +1,11 @@
-import { Settings } from './../common/setting';
+import { logger } from './../common/logger';
+import { ErrorLevel, getDomainProxy, Settings } from './../common/setting';
 import net from 'net';
 import { RecordWithTtl, resolve4, resolve6 } from 'dns';
 import ping from 'ping';
 import path from 'path';
 import fs from 'fs';
-import { CacheData, DomainChannelStats, DomainStatDesc } from './types';
+import { CacheData, DomainChannelStats, DomainStatDesc } from '../common/types';
 import {
     batchFilter,
     getIpAddressList,
@@ -94,7 +95,12 @@ export const tryRestoreCache = async () => {
                 process.nextTick(pingTest);
             }
         } catch (e) {
-            console.error('Parse cache data failed: ' + e.message);
+            logger.error(
+                ErrorLevel.dangerous,
+                undefined,
+                undefined,
+                'Parse cache data failed: ' + e.message,
+            );
         }
     }
 };
@@ -247,6 +253,12 @@ export const diagnoseDomain = async (
     return statsList;
 };
 
+export const getTargets = async (addr: string, port: number) => {
+    const target = getDomainProxy(addr);
+    if (target) return [new DomainChannelStats(addr, port, `${addr}:${port}`, target)];
+    return await diagnoseDomain(addr, port);
+};
+
 // TODO:
 //export const targetFeedBack = (target: Target, latency: number) => {};
 
@@ -308,7 +320,14 @@ export const pingDomain = (domain: string, count = 10): Promise<ping.PingRespons
                 })
                 .then(r)
                 .catch((e) => {
-                    console.log('Error: ping failed:\n\t', domain, e);
+                    logger.error(
+                        ErrorLevel.notice,
+                        undefined,
+                        undefined,
+                        'Error: ping failed:\n\t',
+                        domain,
+                        e,
+                    );
                     r(failedRes);
                 });
         }),

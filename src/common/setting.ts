@@ -1,8 +1,30 @@
+import { ProtocolBase } from './types';
+
 export interface Target {
     ip: string;
     port: number;
     notProxy?: true;
     fixedDomains?: (string | RegExp)[];
+}
+export const isDev = process.env.NODE_ENV === 'development';
+
+export enum ErrorLevel {
+    off,
+    dangerous,
+    important,
+    /** Errorlevel warn means may affect proxy usage, such as a main connection failed. */
+    warn,
+    /** Errorlevel debugDetail means info may helpful for debug, such as one race connection failed. */
+    debugDetail,
+    notice,
+    all = 10000,
+}
+export enum LogLevel {
+    off,
+    important,
+    notice,
+    detail,
+    all = 10000,
 }
 export const Settings = {
     socketConnectTimeout: 15000,
@@ -16,6 +38,7 @@ export const Settings = {
     port: 8008,
     host: '0.0.0.0',
     proxyCostBonus: 10,
+    actionRaceCostRate: 3,
     maxPkgLossPct: 50,
     maxGoodLatency: 150,
     pingAsync: true,
@@ -35,4 +58,40 @@ export const Settings = {
     /** time unit (millisecond) for the realTimeout methods */
     timeoutUnit: 500,
     useIpv6: false,
+    errorLevel: isDev ? ErrorLevel.warn : ErrorLevel.off,
+    errorFilter: (target?: Target, protocol?: ProtocolBase) => true,
+    logLevel: isDev ? LogLevel.important : LogLevel.off,
+    logFilter: (target?: Target, protocol?: ProtocolBase) => true,
+    loggerTime: isDev,
 };
+
+export const overrideSetting = (settings: Partial<typeof Settings>) => {
+    Object.assign(Settings, settings);
+    getDomainProxy = genGetDomainProxy();
+};
+
+// TODO: return targets,rather than first match target.
+const genGetDomainProxy = () => {
+    const domainTargetMap = new Map<string, Target>();
+    const domainProxyPairs: [string | RegExp, Target][] = [];
+    Settings.proxys.forEach((target) => {
+        target.fixedDomains?.forEach((s) => domainProxyPairs.push([s, target]));
+    });
+
+    return (domain: string) => {
+        let target = domainTargetMap.get(domain);
+        if (target) return target;
+        domainProxyPairs.some((v) => {
+            if (domain.match(v[0])) {
+                target = v[1];
+                domainTargetMap.set(domain, target);
+                return true;
+            }
+        });
+        return target;
+    };
+};
+/**
+ * Parse proxy-domain map from Settings and retrun a method for query.
+ */
+export let getDomainProxy = genGetDomainProxy();
