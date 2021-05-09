@@ -75,8 +75,8 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
             return true;
         };
         const createSock = () => {
-            const raceStartAt = Date.now(),
-                dataStartAt = 0;
+            const raceStartAt = Date.now();
+            let dataStartAt = 0;
             let recvCount = 0;
             let lastTimeoutVerifyAt = 0;
             const sock: Socket = net.connect(target.port, target.ip, async () => {
@@ -106,14 +106,7 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
                 dataCache.forEach((d) => protocol.writeToTargetSock(d, sock, target));
             });
             const onData = (data: Buffer) => {
-                logger.log(
-                    LogLevel.detail,
-                    target,
-                    protocol,
-                    'On race data:',
-                    data.length,
-                    msockPair,
-                );
+                logger.log(LogLevel.detail, target, protocol, 'On race data:', data, msockPair);
                 recvCount++;
                 maxRecvCount = Math.max(recvCount, maxRecvCount);
                 if (msockPair) {
@@ -201,6 +194,8 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
                     );
                     cbMap['error']?.(error);
                     finished = true;
+                    if (!targets.some((v) => v.target.notProxy))
+                        notExactlyGoodStats.clear(protocol.addr);
                 }
             };
             sock.on('end', () => {

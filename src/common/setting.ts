@@ -24,6 +24,7 @@ export enum LogLevel {
     important,
     notice,
     detail,
+    noisyDetail,
     all = 10000,
 }
 export const Settings = {
@@ -62,7 +63,9 @@ export const Settings = {
     errorFilter: (target?: Target, protocol?: ProtocolBase) => true,
     logLevel: isDev ? LogLevel.important : LogLevel.off,
     logFilter: (target?: Target, protocol?: ProtocolBase) => true,
-    loggerTime: isDev,
+    loggerTime: true,
+    loggerFoldToLenLimit: 80,
+    loggerInfoStringify: false,
 };
 
 export const overrideSetting = (settings: Partial<typeof Settings>) => {

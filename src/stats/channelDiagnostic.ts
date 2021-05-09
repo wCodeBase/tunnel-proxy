@@ -41,8 +41,12 @@ export const notExactlyGoodStats = (() => {
             if (stats < 0) notGoodDomainMap.delete(domain);
             else notGoodDomainMap.set(domain, stats);
         },
-        clear() {
-            notGoodDomainMap.clear();
+        /**
+         * Clear notGood count of one domain or all.
+         */
+        clear(domain?: string) {
+            if (domain) notGoodDomainMap.delete(domain);
+            else notGoodDomainMap.clear();
         },
     };
 })();

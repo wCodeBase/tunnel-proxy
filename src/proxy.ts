@@ -5,7 +5,7 @@ import { ProtocolSocks5 } from './protocols/socks5';
 import { DomainChannelStats, ProtocolBase } from './common/types';
 import { getTargets, tryRestoreCache, trySaveCache } from './stats/channelDiagnostic';
 import net from 'net';
-import { ErrorLevel, LogLevel, Settings } from './common/setting';
+import { ErrorLevel, LogLevel, Settings, isDev } from './common/setting';
 
 async function sockConnect(targets: DomainChannelStats[], protocol: ProtocolBase) {
     if (!targets.length) {
@@ -19,12 +19,20 @@ async function sockConnect(targets: DomainChannelStats[], protocol: ProtocolBase
 
 export function startProxy(): void {
     tryRestoreCache();
+    let traceIdCount = 0;
 
     const sockIpHostSet = new Set<string>();
 
     const server = new net.Server((sock) => {
+        const traceId = logger.doseLog() ? `${traceIdCount++}--${Date.now() / 1000}` : '';
         const strIpHost = `${sock.remoteAddress}:${sock.remotePort}`;
         if (sockIpHostSet.has(strIpHost)) {
+            logger.error(
+                ErrorLevel.dangerous,
+                undefined,
+                traceId,
+                'Origin socket rejected becouse ip-port pair exist',
+            );
             sock.destroy();
             return;
         }
@@ -33,11 +41,11 @@ export function startProxy(): void {
             sockIpHostSet.delete(strIpHost);
         });
         sock.once('data', async (data: Buffer) => {
-            logger.log(LogLevel.detail, undefined, undefined, 'On origin data.', data.length);
+            logger.log(LogLevel.noisyDetail, undefined, traceId, 'On origin data.', data);
             let protocol: ProtocolBase | undefined;
             try {
                 for (const Protocol of [ProtocolSocks5, ProtocolHttp]) {
-                    protocol = await new Protocol(sock, raceConnect).process(data);
+                    protocol = await new Protocol(sock, raceConnect, traceId).process(data);
                     if (protocol) break;
                 }
             } catch (e) {
@@ -58,18 +66,19 @@ export function startProxy(): void {
             }
             const { addr, port } = protocol;
             const targets = await getTargets(addr, port);
-            sockConnect(targets, protocol);
             logger.log(LogLevel.detail, undefined, protocol, 'New request', targets);
+            sockConnect(targets, protocol);
         });
     });
     server.listen(Settings.port, Settings.host);
-    console.log(`Proxy listening on ${Settings.host}:${Settings.port}`);
-    process.on('SIGINT', async () => {
+    logger.logVital(`Proxy listening on ${Settings.host}:${Settings.port}`);
+    if (isDev) logger.logVital('Proxy is running in development mode');
+    const doExit = async () => {
+        logger.logVital('Proxy exiting, waiting for cache saving ...');
         await trySaveCache();
+        logger.logVital('Cache saved, exist process ...');
         process.exit();
-    });
-    process.on('SIGTERM', async () => {
-        await trySaveCache();
-        process.exit();
-    });
+    };
+    process.on('SIGINT', doExit);
+    process.on('SIGTERM', doExit);
 }

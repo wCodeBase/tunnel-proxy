@@ -93,12 +93,12 @@ export class ProtocolSocks5 extends ProtocolBase {
     }
     async onLogicConnect(target: Target, targetSock: Socket) {
         if (!target.notProxy) {
-            let ack = await writeSocketForAck(targetSock, NO_AUTH_REQ);
+            let ack = await writeSocketForAck(targetSock, NO_AUTH_REQ, 1500);
             if (!ack.equals(NO_AUTH_ACK))
                 throw new ErrorProtocolProcessing('Socks5 error: unknown ack from next proxy');
             if (!this.targetPackage)
                 throw new ErrorProtocolProcessing('Socks5 error: lack targetPackage');
-            ack = await writeSocketForAck(targetSock, this.targetPackage);
+            ack = await writeSocketForAck(targetSock, this.targetPackage, 2500);
             if (ack[0] !== 5 || ack[1] !== 0 || !ack.slice(2).equals(this.targetPackage.slice(2))) {
                 throw new ErrorProtocolProcessing('Socks5 error: wrong ack message');
             }

@@ -1,37 +1,80 @@
 import { Settings, ErrorLevel, Target, LogLevel } from './setting';
 import { ProtocolBase } from './types';
+import { cyan } from 'colors';
 import dayjs from 'dayjs';
-const getLoggerTime = () =>
-    Settings.loggerTime ? `[${dayjs().format('YYYY-MM-DD HH:mm:ss.SSS')}] ` : '';
+
+const getTimeFormated = () => `[${dayjs().format('YYYY-MM-DD HH:mm:ss.SSS')}] `;
+
+const getLoggerTimeSegment = () => (Settings.loggerTime ? getTimeFormated() : '');
+
+const stringify = (args: any[]) =>
+    args.map((v) =>
+        !(v instanceof Error) && Number(v?.length) > Settings.loggerFoldToLenLimit
+            ? Settings.loggerInfoStringify
+                ? `\n${cyan(`[${v.constructor?.name || typeof v} length: ${v.length}]`)}\n${String(
+                      v,
+                  )}\n`
+                : v.length
+            : v,
+    );
+
 export const logger = {
-    error(level: ErrorLevel, target?: Target, protocol?: ProtocolBase, ...args: any[]) {
+    error(
+        level: ErrorLevel,
+        target?: Target,
+        protocolOrTraceId?: ProtocolBase | string,
+        ...args: any[]
+    ) {
+        let protocol = undefined;
+        let traceId = undefined;
+        if (protocolOrTraceId instanceof ProtocolBase) {
+            protocol = protocolOrTraceId;
+            traceId = protocol?.traceId;
+        } else if (protocolOrTraceId) traceId = protocolOrTraceId;
         if (
             level > ErrorLevel.off &&
             level <= Settings.errorLevel &&
             Settings.errorFilter(target, protocol)
         ) {
             console.error(
-                `${getLoggerTime()}Error occurred(${ErrorLevel[level]}) ${
+                `${getLoggerTimeSegment()}Error occurred(${ErrorLevel[level]}) ${
                     protocol?.protocol || ''
-                } ${protocol?.addr || ''}:`,
+                } ${protocol?.addr || ''} (${traceId}):`,
             );
             if (target) console.error('target:', target);
-            console.error(...args);
+            console.error(...stringify(args));
+            console.error('\n');
         }
     },
-    log(level: LogLevel, target?: Target, protocol?: ProtocolBase, ...args: any[]) {
+    log(
+        level: LogLevel,
+        target?: Target,
+        protocolOrTraceId?: ProtocolBase | string,
+        ...args: any[]
+    ) {
+        let protocol = undefined;
+        let traceId = undefined;
+        if (protocolOrTraceId instanceof ProtocolBase) {
+            protocol = protocolOrTraceId;
+            traceId = protocol?.traceId;
+        } else if (protocolOrTraceId) traceId = protocolOrTraceId;
         if (
             level > LogLevel.off &&
             level <= Settings.logLevel &&
             Settings.logFilter(target, protocol)
         ) {
             console.log(
-                `${getLoggerTime()}Log(${LogLevel[level]}) ${protocol?.protocol || ''} ${
+                `${getLoggerTimeSegment()}Log(${LogLevel[level]}) ${protocol?.protocol || ''} ${
                     protocol?.addr || ''
-                }:`,
+                } (${traceId}):`,
             );
             if (target) console.error('target:', target);
-            console.log(...args);
+            console.log(...stringify(args));
+            console.log('\n');
         }
     },
+    logVital(...args: any[]) {
+        console.log(getLoggerTimeSegment(), ...args);
+    },
+    doseLog: () => Settings.logLevel !== LogLevel.off || Settings.errorLevel !== ErrorLevel.off,
 };

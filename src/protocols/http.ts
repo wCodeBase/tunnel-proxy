@@ -194,7 +194,11 @@ export class ProtocolHttp extends ProtocolBase {
     }
     async onLogicConnect(target: Target, targetSock: Socket) {
         if (this.isConnect && !target.notProxy) {
-            const res = await writeSocketForAck(targetSock, this.recvDatas[0]);
+            const res = await writeSocketForAck(
+                targetSock,
+                this.recvDatas[0],
+                target.notProxy ? 1500 : 2500,
+            );
             if (!res.includes(CONNECTION_ESTABLISHED))
                 throw new ErrorProtocolProcessing(
                     `Establish proxy connection failed: ` + String(res),

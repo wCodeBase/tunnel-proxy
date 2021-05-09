@@ -64,9 +64,11 @@ export abstract class ProtocolBase {
     port = 0;
     sock: Socket;
     connectFunc: LogicConnect;
-    constructor(sock: Socket, connectFun: LogicConnect) {
+    traceId = '';
+    constructor(sock: Socket, connectFun: LogicConnect, tranceId: string) {
         this.sock = sock;
         this.connectFunc = connectFun;
+        this.traceId = tranceId;
     }
     abstract protocol: string;
     /** Process the first package and judge is the correct protocol or not. */
