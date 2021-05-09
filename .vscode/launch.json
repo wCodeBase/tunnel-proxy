@@ -17,6 +17,7 @@
                 "-c",
                 "config.js"
             ],
+            "env": {"NODE_ENV":"development"},
             "runtimeArgs": ["--preserve-symlinks"],
             "cwd": "${workspaceFolder}",
             "protocol": "inspector",

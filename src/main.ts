@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Settings } from './common/setting';
+import { Settings, isDev } from './common/setting';
 import { Command } from 'commander';
 import fs from 'fs';
 import path from 'path';
@@ -46,3 +46,5 @@ if (opts.config) {
 }
 
 startProxy();
+
+if (isDev) require('./dev/settingOverride');
