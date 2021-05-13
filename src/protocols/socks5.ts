@@ -37,7 +37,7 @@ const parseAddrPort = (data: Buffer) => {
     }
     if (resData.length !== 2)
         throw new ErrorProtocolProcessing('Parse socks5 port failed: illegal data length');
-    return { addr, port: resData.readInt16BE() };
+    return { addr, port: resData.readUInt16BE() };
 };
 /**
  * Minimal socks5 protocol implemention.
