@@ -47,4 +47,10 @@ if (opts.config) {
 
 startProxy();
 
-if (isDev) require('./dev/settingOverride');
+if (isDev) {
+    try {
+        require('../dev/settingOverride');
+    } catch (e) {
+        console.error(`Require "./dev/settingOverride" failed`, e);
+    }
+}

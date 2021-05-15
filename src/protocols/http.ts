@@ -22,6 +22,7 @@ const PACKAGE_TAIL = Buffer.from('\r\n\r\n');
 const CONNECTED_FEEDBACK = Buffer.from('HTTP/1.1 200 Connection Established\r\n\r\n');
 const CONNECTION_ESTABLISHED = Buffer.from('Connection Established');
 const CONNECT_FAILED_FEEDBACK = Buffer.from('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+const HTTP_RESPONSE_HEAD_CHARS = Buffer.from('HTTP/');
 
 function parseHttpFirstLine(data: Buffer) {
     const start = data.indexOf(CODE_SPACE);
@@ -52,6 +53,25 @@ function parseAddrAndPort(data: Buffer) {
     return { method, version, addr, port, protocol };
 }
 
+const parseResponseHeader = (data: Buffer) => {
+    if (!data.slice(0, HTTP_RESPONSE_HEAD_CHARS.length).equals(HTTP_RESPONSE_HEAD_CHARS)) return;
+    const headerEnd = data.indexOf(PACKAGE_TAIL);
+    if (headerEnd >= 0) {
+        const lines = String(data.slice(0, headerEnd))
+            .split('\r\n')
+            .filter((v) => v);
+        const firstLine = lines.shift();
+        if (!firstLine) return undefined;
+        const [version, code, status] = firstLine.split(' ');
+        const header = lines.reduce((res, line) => {
+            const [k, v] = line.split(':');
+            res[k] = v.trim();
+            return res;
+        }, {} as { [k: string]: string });
+        return { version, code, status, header, contentStart: headerEnd + PACKAGE_TAIL.length };
+    }
+};
+
 export class ProtocolHttp extends ProtocolBase {
     method = '';
     version = '';
@@ -80,6 +100,10 @@ export class ProtocolHttp extends ProtocolBase {
         const { isConnect, sock } = this;
         const dAndP = this.addr + ':' + this.port;
         const destSock = this.connectFunc(targets, this);
+        type RSockStatus = { dataLenRest: number; toClose: boolean };
+        const checkToForceDestory = () => {
+            if (Settings.forceSeperateHttpRequest) sock.destroy();
+        };
         /**
          * ${isConnect === false} means this is a http (not https) proxy request, which may recieve requests for multi domain.
          * In this case, it's necessary to create multi destSocks for different domain.
@@ -116,10 +140,9 @@ export class ProtocolHttp extends ProtocolBase {
                 restDestSockMap.get(dAndP)?.destroy();
                 restDestSockMap.delete(dAndP);
                 if (!restDestSockMap.size) destory();
+                else checkToForceDestory();
             }
         };
-        const destEnd = genDestEnd(dAndP);
-        const destError = genDestEnd(dAndP, true);
         const genEnd = (isError: boolean) => (err?: any) => {
             if (isError)
                 logger.error(
@@ -143,48 +166,171 @@ export class ProtocolHttp extends ProtocolBase {
             if (!restDestSockMap) destSock.destroy();
             else Array.from(restDestSockMap.values()).forEach((s) => s.destroy());
         };
-        const onDataBack = (data: Buffer) => {
-            recvDataCount++;
-            sock.write(data);
+        const genOnDataBack = (rsock: LogicSocket, dAndP: string) => {
+            let status: RSockStatus | null = null;
+            const dataCache: Buffer[] = [];
+            return (data: Buffer) => {
+                dataCache.push(data);
+                recvDataCount++;
+                if (isConnect || !lastDAndP || dAndP === lastDAndP) sock.write(data);
+                if (lastDAndP && lastDAndP !== dAndP)
+                    logger.error(
+                        ErrorLevel.dangerous,
+                        undefined,
+                        this,
+                        'dAndP conflict with lastDAndP',
+                        dAndP,
+                        lastDAndP,
+                    );
+                if (!isConnect) {
+                    if (!status) {
+                        const head = parseResponseHeader(data);
+                        if (head) {
+                            status = { toClose: false, dataLenRest: 0 };
+                            logger.log(
+                                LogLevel.detail,
+                                undefined,
+                                this,
+                                'Heaser parsed',
+                                head,
+                                head?.header,
+                            );
+                            const contentLen = head.header['Content-Length'];
+                            if (contentLen !== undefined) {
+                                status.dataLenRest = Number.parseInt(contentLen);
+                                status.dataLenRest =
+                                    status.dataLenRest - (data.length - head.contentStart);
+                            }
+                            if (head.header['Connection'] === 'close') {
+                                logger.log(
+                                    LogLevel.detail,
+                                    undefined,
+                                    this,
+                                    'On connection close header',
+                                    head,
+                                );
+                                status.toClose = true;
+                            }
+                        }
+                        if (
+                            !status?.dataLenRest &&
+                            data.slice(-PACKAGE_TAIL.length).includes(PACKAGE_TAIL)
+                        ) {
+                            checkToForceDestory();
+                        }
+                    } else {
+                        status.dataLenRest -= data.length;
+                        logger.log(
+                            LogLevel.noisyDetail,
+                            undefined,
+                            this,
+                            'Receive data rest length',
+                            status.dataLenRest,
+                            status,
+                        );
+                        if (status.dataLenRest < 0)
+                            logger.error(
+                                ErrorLevel.dangerous,
+                                undefined,
+                                this,
+                                'Http response rest length become nagetive',
+                                status,
+                            );
+                        if (status.dataLenRest <= 0) {
+                            if (status.toClose) rsock.destroy();
+                            checkToForceDestory();
+                            status = null;
+                            if (lastDAndP) {
+                                logger.error(
+                                    ErrorLevel.dangerous,
+                                    undefined,
+                                    this,
+                                    'lastDAndP value remains, maybe logic error exist',
+                                    lastDAndP,
+                                );
+                                lastDAndP = '';
+                            }
+                        }
+                    }
+                }
+            };
         };
-        const bindSock = (rSock: LogicSocket) => {
-            if (isConnect)
+        const bindSock = (rSock: LogicSocket, dAndP: string) => {
+            if (isConnect) {
                 rSock.on('connect', () => {
                     sock.write(CONNECTED_FEEDBACK);
                 });
-            rSock.on('end', destEnd);
-            rSock.on('error', destError);
-            rSock.on('data', onDataBack);
+            }
+            rSock.on('end', genDestEnd(dAndP));
+            rSock.on('error', genDestEnd(dAndP, true));
+            rSock.on('data', genOnDataBack(rSock, dAndP));
         };
-        bindSock(destSock);
+        bindSock(destSock, dAndP);
         let lastDAndP = this.recvDatas[0].slice(-PACKAGE_TAIL.length).includes(PACKAGE_TAIL)
             ? ''
             : dAndP;
         sock.on('data', async (data) => {
+            logger.log(LogLevel.noisyDetail, undefined, this, 'Receive data from client', data);
+            if (isConnect)
+                logger.log(
+                    LogLevel.noisyDetail,
+                    undefined,
+                    this,
+                    'Receive data print first line',
+                    String(data).split('\n')[0],
+                );
             backDataCount++;
             if (restDestSockMap) {
                 if (lastDAndP) {
-                    restDestSockMap.get(lastDAndP)?.write(data);
+                    const rsock = restDestSockMap.get(lastDAndP);
+                    if (rsock) {
+                        rsock.write(data);
+                    } else {
+                        logger.error(
+                            ErrorLevel.dangerous,
+                            undefined,
+                            this,
+                            'lastDAndP is set but socket dose no exist in restDestSockMap',
+                        );
+                    }
                 } else {
                     const info = parseAddrAndPort(data);
-                    if (!info) destSock.write(data);
-                    else {
+                    if (!info) {
+                        logger.log(
+                            LogLevel.noisyDetail,
+                            undefined,
+                            this,
+                            'No lastDAndP, just send to destSock',
+                            data,
+                        );
+                        destSock.write(data);
+                    } else {
                         const { addr, port } = info;
-                        const dAndP = `${addr}:${port}}`;
+                        const dAndP = `${addr}:${port}`;
+                        logger.log(
+                            LogLevel.noisyDetail,
+                            undefined,
+                            this,
+                            'new lastDAndP',
+                            dAndP,
+                            data,
+                        );
                         lastDAndP = dAndP;
+                        this.addr = addr;
+                        this.port = port;
                         let sock = restDestSockMap.get(dAndP);
                         if (!sock) {
                             const targets = await getTargets(this.addr, this.port);
                             sock = this.connectFunc(targets, this);
                             restDestSockMap.set(dAndP, sock);
-                            bindSock(sock);
+                            bindSock(sock, dAndP);
                         }
                         sock.write(data);
                     }
                 }
                 if (data.slice(-PACKAGE_TAIL.length).includes(PACKAGE_TAIL)) {
+                    logger.log(LogLevel.noisyDetail, undefined, this, 'lastDAndP reset');
                     lastDAndP = '';
-                    if (Settings.forceSeperateHttpRequest) sock.destroy();
                 }
             } else destSock.write(data);
         });
@@ -214,9 +360,16 @@ export class ProtocolHttp extends ProtocolBase {
             if (spaceAt > 0) {
                 const secondSpaceAt = data.indexOf(CODE_SPACE, spaceAt + 1);
                 if (secondSpaceAt >= 0) {
-                    const url = String(data.slice(spaceAt + 1, secondSpaceAt)).replace(
-                        /https?:\/\/[^/]*/,
-                        '',
+                    const oldUrl = String(data.slice(spaceAt + 1, secondSpaceAt));
+                    const url = oldUrl.replace(/https?:\/\/[^/]*/, '');
+                    logger.log(
+                        LogLevel.detail,
+                        target,
+                        this,
+                        'Remove request domain',
+                        oldUrl,
+                        url,
+                        data,
                     );
                     data = Buffer.concat([
                         data.slice(0, spaceAt + 1),

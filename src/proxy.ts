@@ -24,7 +24,7 @@ export function startProxy(): void {
     const sockIpHostSet = new Set<string>();
 
     const server = new net.Server((sock) => {
-        const traceId = logger.doseLog() ? `${traceIdCount++}--${Date.now() / 1000}` : '';
+        const traceId = logger.doseLog() ? `${traceIdCount++}--${Date.now()}` : '';
         const strIpHost = `${sock.remoteAddress}:${sock.remotePort}`;
         if (sockIpHostSet.has(strIpHost)) {
             logger.error(

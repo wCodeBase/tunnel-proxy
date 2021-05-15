@@ -1,6 +1,6 @@
 {
   "name": "tunnel-proxy",
-  "version": "0.0.24-dev.1",
+  "version": "0.0.24-dev.2",
   "description": "A simple HTTP proxy and smart proxy relay",
   "main": "main.js",
   "bin": {

@@ -103,10 +103,26 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
                 sock.on('data', onData);
                 dataStartAt = Date.now();
                 connectCb?.();
-                dataCache.forEach((d) => protocol.writeToTargetSock(d, sock, target));
+                dataCache.forEach((d) => {
+                    logger.log(
+                        LogLevel.noisyDetail,
+                        target,
+                        protocol,
+                        'Write dataCache to target socket',
+                        d,
+                    );
+                    protocol.writeToTargetSock(d, sock, target);
+                });
             });
             const onData = (data: Buffer) => {
-                logger.log(LogLevel.detail, target, protocol, 'On race data:', data, msockPair);
+                logger.log(
+                    LogLevel.detail,
+                    target,
+                    protocol,
+                    `On race data[${data.length}]:`,
+                    data,
+                    msockPair,
+                );
                 recvCount++;
                 maxRecvCount = Math.max(recvCount, maxRecvCount);
                 if (msockPair) {
@@ -245,9 +261,26 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
     return {
         write(data) {
             if (!msockPair) {
+                logger.log(
+                    LogLevel.noisyDetail,
+                    undefined,
+                    protocol,
+                    'Write data to cache and connected race sockets',
+                    data,
+                    targets,
+                );
                 dataCache.push(data);
                 connectedSocks.forEach((s) => protocol.writeToTargetSock(data, s.sock, s.target));
-            } else protocol.writeToTargetSock(data, msockPair.sock, msockPair.target);
+            } else {
+                logger.log(
+                    LogLevel.noisyDetail,
+                    msockPair.target,
+                    protocol,
+                    'Write data to target socket',
+                    data,
+                );
+                protocol.writeToTargetSock(data, msockPair.sock, msockPair.target);
+            }
         },
         destroy() {
             logger.log(LogLevel.detail, undefined, protocol, 'RaceConnect Destory called', targets);
