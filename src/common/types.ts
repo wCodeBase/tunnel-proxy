@@ -49,6 +49,7 @@ function LogicSocketOn(event: 'data', listener: (data: Buffer) => void): void;
 export type LogicSocket = Pick<Socket, 'destroy'> & {
     on: typeof LogicSocketOn;
     write: (data: Buffer) => void;
+    getCurrentTarget: () => Target;
 };
 
 export type LogicConnect = (targets: DomainChannelStats[], protocol: ProtocolBase) => LogicSocket;

@@ -1,3 +1,4 @@
+import { isDev } from './../common/setting';
 import { logger } from './../common/logger';
 
 /***
@@ -78,6 +79,7 @@ export class ProtocolHttp extends ProtocolBase {
     isConnect = false;
     protocol = 'http'; // Or https, depends on result of "parseAddrAndPort".
     recvDatas: Buffer[] = [];
+    dAndPHistory: string[] = [];
     async process(data: Buffer): Promise<undefined | ProtocolHttp> {
         const domainAndPort = parseAddrAndPort(data);
         if (!domainAndPort) return undefined;
@@ -100,7 +102,7 @@ export class ProtocolHttp extends ProtocolBase {
         const { isConnect, sock } = this;
         const dAndP = this.addr + ':' + this.port;
         const destSock = this.connectFunc(targets, this);
-        type RSockStatus = { dataLenRest: number; toClose: boolean };
+        type RSockStatus = { dataLenRest?: number; toClose: boolean };
         const checkToForceDestory = () => {
             if (Settings.forceSeperateHttpRequest) sock.destroy();
         };
@@ -110,14 +112,14 @@ export class ProtocolHttp extends ProtocolBase {
          * Use this map to store domain-sock mapping relations;
          */
         const restDestSockMap = isConnect ? null : new Map([[dAndP, destSock]]);
-        const genDestEnd = (dAndP: string, isError = false) => (err?: any) => {
+        const genDestEnd = (dAndP: string, rsock: LogicSocket, isError = false) => (err?: any) => {
             const destory = () => {
                 if (isError) sock.write(CONNECT_FAILED_FEEDBACK);
                 sock.destroy();
                 if (isError)
                     logger.error(
                         ErrorLevel.warn,
-                        undefined,
+                        rsock.getCurrentTarget,
                         this,
                         'Target sockets error',
                         err,
@@ -127,7 +129,7 @@ export class ProtocolHttp extends ProtocolBase {
                 else
                     logger.log(
                         LogLevel.detail,
-                        undefined,
+                        rsock.getCurrentTarget,
                         this,
                         'Target socks end',
                         recvDataCount,
@@ -176,7 +178,7 @@ export class ProtocolHttp extends ProtocolBase {
                 if (lastDAndP && lastDAndP !== dAndP)
                     logger.error(
                         ErrorLevel.dangerous,
-                        undefined,
+                        rsock.getCurrentTarget,
                         this,
                         'dAndP conflict with lastDAndP',
                         dAndP,
@@ -186,10 +188,10 @@ export class ProtocolHttp extends ProtocolBase {
                     if (!status) {
                         const head = parseResponseHeader(data);
                         if (head) {
-                            status = { toClose: false, dataLenRest: 0 };
+                            status = { toClose: false };
                             logger.log(
                                 LogLevel.detail,
-                                undefined,
+                                rsock.getCurrentTarget,
                                 this,
                                 'Heaser parsed',
                                 head,
@@ -204,7 +206,7 @@ export class ProtocolHttp extends ProtocolBase {
                             if (head.header['Connection'] === 'close') {
                                 logger.log(
                                     LogLevel.detail,
-                                    undefined,
+                                    rsock.getCurrentTarget,
                                     this,
                                     'On connection close header',
                                     head,
@@ -212,17 +214,11 @@ export class ProtocolHttp extends ProtocolBase {
                                 status.toClose = true;
                             }
                         }
-                        if (
-                            !status?.dataLenRest &&
-                            data.slice(-PACKAGE_TAIL.length).includes(PACKAGE_TAIL)
-                        ) {
-                            checkToForceDestory();
-                        }
-                    } else {
+                    } else if (status.dataLenRest !== undefined) {
                         status.dataLenRest -= data.length;
                         logger.log(
                             LogLevel.noisyDetail,
-                            undefined,
+                            rsock.getCurrentTarget,
                             this,
                             'Receive data rest length',
                             status.dataLenRest,
@@ -231,25 +227,32 @@ export class ProtocolHttp extends ProtocolBase {
                         if (status.dataLenRest < 0)
                             logger.error(
                                 ErrorLevel.dangerous,
-                                undefined,
+                                rsock.getCurrentTarget,
                                 this,
                                 'Http response rest length become nagetive',
                                 status,
                             );
-                        if (status.dataLenRest <= 0) {
-                            if (status.toClose) rsock.destroy();
-                            checkToForceDestory();
-                            status = null;
-                            if (lastDAndP) {
-                                logger.error(
-                                    ErrorLevel.dangerous,
-                                    undefined,
-                                    this,
-                                    'lastDAndP value remains, maybe logic error exist',
-                                    lastDAndP,
-                                );
-                                lastDAndP = '';
-                            }
+                    }
+                    if (
+                        (status?.dataLenRest !== undefined && status.dataLenRest < 0) ||
+                        (status?.dataLenRest === undefined &&
+                            data.slice(-PACKAGE_TAIL.length).includes(PACKAGE_TAIL))
+                    ) {
+                        if (status?.toClose) {
+                            rsock.destroy();
+                            restDestSockMap?.delete(dAndP);
+                        }
+                        checkToForceDestory();
+                        status = null;
+                        if (lastDAndP) {
+                            logger.error(
+                                ErrorLevel.dangerous,
+                                rsock.getCurrentTarget,
+                                this,
+                                'lastDAndP value remains, maybe logic error exist',
+                                lastDAndP,
+                            );
+                            lastDAndP = '';
                         }
                     }
                 }
@@ -261,8 +264,8 @@ export class ProtocolHttp extends ProtocolBase {
                     sock.write(CONNECTED_FEEDBACK);
                 });
             }
-            rSock.on('end', genDestEnd(dAndP));
-            rSock.on('error', genDestEnd(dAndP, true));
+            rSock.on('end', genDestEnd(dAndP, rSock));
+            rSock.on('error', genDestEnd(dAndP, rSock, true));
             rSock.on('data', genOnDataBack(rSock, dAndP));
         };
         bindSock(destSock, dAndP);
@@ -296,11 +299,11 @@ export class ProtocolHttp extends ProtocolBase {
                 } else {
                     const info = parseAddrAndPort(data);
                     if (!info) {
-                        logger.log(
-                            LogLevel.noisyDetail,
+                        logger.error(
+                            ErrorLevel.dangerous,
                             undefined,
                             this,
-                            'No lastDAndP, just send to destSock',
+                            'No parsed info, just send to destSock',
                             data,
                         );
                         destSock.write(data);
@@ -315,9 +318,18 @@ export class ProtocolHttp extends ProtocolBase {
                             dAndP,
                             data,
                         );
+                        this.dAndPHistory.push(lastDAndP);
                         lastDAndP = dAndP;
                         this.addr = addr;
                         this.port = port;
+                        logger.log(
+                            LogLevel.noisyDetail,
+                            undefined,
+                            this,
+                            'Swith dAndP',
+                            dAndP,
+                            this.dAndPHistory,
+                        );
                         let sock = restDestSockMap.get(dAndP);
                         if (!sock) {
                             const targets = await getTargets(this.addr, this.port);

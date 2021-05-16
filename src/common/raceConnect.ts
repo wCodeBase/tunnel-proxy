@@ -33,7 +33,7 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
     let minRecvSockPair: SocketTargetPair | null = null;
     let minCancelCb: (() => void) | null = null;
     let judgeTimeOut = -Infinity;
-    const judgeWin = (isTimeout = true) => {
+    const judgeWin = (isTimeout = true, winCb?: () => void) => {
         if (msockPair) return;
         const win = isTimeout || socks.filter((v) => v).length === 1;
         if (win && minRecvSockPair) {
@@ -58,9 +58,16 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
                         : cbMap[ev],
                 ),
             );
+            logger.log(
+                LogLevel.noisyDetail,
+                msockPair.target,
+                protocol,
+                'Race win and send cached datas to client',
+            );
             raceRecvDataMap.get(msockPair.sock)?.forEach((d) => cbMap['data']?.(d));
             // raceRecvDataMap.clear();
         }
+        if (win) winCb?.();
         return win;
     };
     const sockMapper = (domainStats: DomainChannelStats, i: number) => {
@@ -126,9 +133,14 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
                 recvCount++;
                 maxRecvCount = Math.max(recvCount, maxRecvCount);
                 if (msockPair) {
-                    // if (msockPair.sock === sock) sock.removeListener('data', onData);
                     if (msockPair.sock !== sock && domainStats.status === 'good')
                         notExactlyGoodStats.feedback(true, protocol.addr);
+                    logger.log(
+                        LogLevel.noisyDetail,
+                        target,
+                        protocol,
+                        'Race package will be drop because msockPair exist',
+                    );
                     return;
                 }
                 const mCache = raceRecvDataMap.get(sock);
@@ -150,8 +162,11 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
                     minCancelCb?.();
                     minCancelCb = () =>
                         fail(new ErrorRaceFail('Error: race failed becouse min cancelled'));
-                    if (!judgeWin(false) && judgeTimeOut === -Infinity) {
-                        judgeTimeOut = Number(setTimeout(judgeWin, costBonused + actionCost));
+                    const winCb = () => sock.removeListener('data', onData);
+                    if (!judgeWin(false, winCb) && judgeTimeOut === -Infinity) {
+                        judgeTimeOut = Number(
+                            setTimeout(() => judgeWin(true, winCb), costBonused + actionCost),
+                        );
                         if (target.notProxy && actionCost + raceCost < Settings.goodSocketTimeout)
                             notExactlyGoodStats.feedback(false, protocol.addr);
                         else if (targets.find((v) => v.status === 'good'))
@@ -291,5 +306,6 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
         on: (ev: string | number, cb: (...args: any) => void) => {
             cbMap[ev] = cb;
         },
+        getCurrentTarget: () => msockPair?.target,
     } as LogicSocket;
 };

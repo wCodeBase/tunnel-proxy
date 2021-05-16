@@ -18,10 +18,13 @@ const stringify = (args: any[]) =>
             : v,
     );
 
+const getTarget = (target?: Target | (() => Target)) =>
+    typeof target === 'function' ? target() : target;
+
 export const logger = {
     error(
         level: ErrorLevel,
-        target?: Target,
+        target?: Target | (() => Target),
         protocolOrTraceId?: ProtocolBase | string,
         ...args: any[]
     ) {
@@ -34,8 +37,9 @@ export const logger = {
         if (
             level > ErrorLevel.off &&
             level <= Settings.errorLevel &&
-            Settings.errorFilter(target, protocol)
+            Settings.errorFilter(getTarget(target), protocol)
         ) {
+            target = getTarget(target);
             console.error(
                 `${getLoggerTimeSegment()}Error occurred(${ErrorLevel[level]}) ${
                     protocol?.protocol || ''
@@ -48,7 +52,7 @@ export const logger = {
     },
     log(
         level: LogLevel,
-        target?: Target,
+        target?: Target | (() => Target),
         protocolOrTraceId?: ProtocolBase | string,
         ...args: any[]
     ) {
@@ -61,8 +65,9 @@ export const logger = {
         if (
             level > LogLevel.off &&
             level <= Settings.logLevel &&
-            Settings.logFilter(target, protocol)
+            Settings.logFilter(getTarget(target), protocol)
         ) {
+            target = getTarget(target);
             console.log(
                 `${getLoggerTimeSegment()}Log(${LogLevel[level]}) ${protocol?.protocol || ''} ${
                     protocol?.addr || ''
