@@ -1,6 +1,6 @@
 {
   "name": "tunnel-proxy",
-  "version": "0.0.23",
+  "version": "0.0.24-dev.4",
   "description": "A simple HTTP proxy and smart proxy relay",
   "main": "main.js",
   "bin": {
@@ -22,7 +22,9 @@
   "license": "MIT",
   "dependencies": {
     "@types/lodash": "^4.14.168",
+    "colors": "^1.4.0",
     "commander": "^7.1.0",
+    "dayjs": "^1.10.4",
     "https-proxy-agent": "^5.0.0",
     "is-online": "^9.0.0",
     "lodash": "^4.17.21",

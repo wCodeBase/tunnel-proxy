@@ -1,10 +1,11 @@
-import { Settings } from './../common/setting';
+import { logger } from './../common/logger';
+import { ErrorLevel, getDomainProxy, LogLevel, Settings } from './../common/setting';
 import net from 'net';
 import { RecordWithTtl, resolve4, resolve6 } from 'dns';
 import ping from 'ping';
 import path from 'path';
 import fs from 'fs';
-import { CacheData, DomainChannelStats, DomainStatDesc } from './types';
+import { CacheData, DomainChannelStats, DomainStatDesc } from '../common/types';
 import {
     batchFilter,
     getIpAddressList,
@@ -40,8 +41,12 @@ export const notExactlyGoodStats = (() => {
             if (stats < 0) notGoodDomainMap.delete(domain);
             else notGoodDomainMap.set(domain, stats);
         },
-        clear() {
-            notGoodDomainMap.clear();
+        /**
+         * Clear notGood count of one domain or all.
+         */
+        clear(domain?: string) {
+            if (domain) notGoodDomainMap.delete(domain);
+            else notGoodDomainMap.clear();
         },
     };
 })();
@@ -94,7 +99,12 @@ export const tryRestoreCache = async () => {
                 process.nextTick(pingTest);
             }
         } catch (e) {
-            console.error('Parse cache data failed: ' + e.message);
+            logger.error(
+                ErrorLevel.dangerous,
+                undefined,
+                undefined,
+                'Parse cache data failed: ' + e.message,
+            );
         }
     }
 };
@@ -247,6 +257,12 @@ export const diagnoseDomain = async (
     return statsList;
 };
 
+export const getTargets = async (addr: string, port: number) => {
+    const target = getDomainProxy(addr);
+    if (target) return [new DomainChannelStats(addr, port, `${addr}:${port}`, target)];
+    return await diagnoseDomain(addr, port);
+};
+
 // TODO:
 //export const targetFeedBack = (target: Target, latency: number) => {};
 
@@ -308,7 +324,14 @@ export const pingDomain = (domain: string, count = 10): Promise<ping.PingRespons
                 })
                 .then(r)
                 .catch((e) => {
-                    console.log('Error: ping failed:\n\t', domain, e);
+                    logger.error(
+                        ErrorLevel.notice,
+                        undefined,
+                        undefined,
+                        'Error: ping failed:\n\t',
+                        domain,
+                        e,
+                    );
                     r(failedRes);
                 });
         }),
@@ -369,6 +392,7 @@ const verifyTtl = async (
         }
         const mLock = Math.random().toString();
         lock = mLock;
+        logger.log(LogLevel.detail, undefined, undefined, 'Domain ttl refresh start');
         if (ignoreLock) realTimeout.clearTimeout(cycleRefreshTtl);
         const start = Date.now();
         const existStats = Array.from(domainStatsMap.values());
@@ -394,6 +418,7 @@ const verifyTtl = async (
                 if (lock !== mLock) return;
                 process.nextTick(worker);
             } else {
+                logger.log(LogLevel.detail, undefined, undefined, 'Domain ttl refresh done');
                 setTimeout(cycleRefreshTtl, waitMilli - (Date.now() - start));
                 lock = '';
             }
@@ -408,6 +433,7 @@ const verifyTtl = async (
         const ipList = getIpAddressList();
         if (lastIpList) {
             if (JSON.stringify(lastIpList) !== JSON.stringify(ipList)) {
+                logger.log(LogLevel.notice, undefined, undefined, 'System Ip list change');
                 notExactlyGoodStats.clear();
                 cycleRefreshTtl(true, true);
             }
