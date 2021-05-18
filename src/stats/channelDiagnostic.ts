@@ -1,5 +1,5 @@
 import { logger } from './../common/logger';
-import { ErrorLevel, getDomainProxy, Settings } from './../common/setting';
+import { ErrorLevel, getDomainProxy, LogLevel, Settings } from './../common/setting';
 import net from 'net';
 import { RecordWithTtl, resolve4, resolve6 } from 'dns';
 import ping from 'ping';
@@ -392,6 +392,7 @@ const verifyTtl = async (
         }
         const mLock = Math.random().toString();
         lock = mLock;
+        logger.log(LogLevel.detail, undefined, undefined, 'Domain ttl refresh start');
         if (ignoreLock) realTimeout.clearTimeout(cycleRefreshTtl);
         const start = Date.now();
         const existStats = Array.from(domainStatsMap.values());
@@ -417,6 +418,7 @@ const verifyTtl = async (
                 if (lock !== mLock) return;
                 process.nextTick(worker);
             } else {
+                logger.log(LogLevel.detail, undefined, undefined, 'Domain ttl refresh done');
                 setTimeout(cycleRefreshTtl, waitMilli - (Date.now() - start));
                 lock = '';
             }
@@ -431,6 +433,7 @@ const verifyTtl = async (
         const ipList = getIpAddressList();
         if (lastIpList) {
             if (JSON.stringify(lastIpList) !== JSON.stringify(ipList)) {
+                logger.log(LogLevel.notice, undefined, undefined, 'System Ip list change');
                 notExactlyGoodStats.clear();
                 cycleRefreshTtl(true, true);
             }
