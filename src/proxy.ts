@@ -27,14 +27,7 @@ export function startProxy(): void {
         const traceId = logger.doseLog() ? `${traceIdCount++}--${Date.now()}` : '';
         const strIpHost = `${sock.remoteAddress}:${sock.remotePort}`;
         if (sockIpHostSet.has(strIpHost)) {
-            logger.error(
-                ErrorLevel.dangerous,
-                undefined,
-                traceId,
-                'Origin socket rejected becouse ip-port pair exist',
-            );
-            sock.destroy();
-            return;
+            logger.error(ErrorLevel.dangerous, undefined, traceId, 'Client ip-port pair exist');
         }
         sockIpHostSet.add(strIpHost);
         sock.on('end', () => {
