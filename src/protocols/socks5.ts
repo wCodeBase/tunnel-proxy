@@ -6,8 +6,9 @@ import { ProtocolBase, ErrorProtocolProcessing, DomainChannelStats } from './../
 import { writeSocketForAck } from './../common/util';
 import { Socket } from 'net';
 import { chunk } from 'lodash';
-import { Settings, Target } from '../common/setting';
+import { ErrorLevel, Settings, Target } from '../common/setting';
 import nFetch from 'node-fetch';
+import { logger } from '../common/logger';
 
 const NO_AUTH_ACK = Buffer.from([5, 0]);
 const NO_AUTH_REQ = Buffer.from([5, 1, 0]);
@@ -111,7 +112,7 @@ export class ProtocolSocks5 extends ProtocolBase {
         if (!target.notProxy) return true;
         return await nFetch(
             `${this.port === 443 ? 'https' : 'http'}://${this.addr}${
-                [80, 443].includes(this.port) ? '' : this.port
+                [80, 443].includes(this.port) ? '' : ':' + this.port
             }`,
             {
                 method: 'GET',
@@ -120,6 +121,9 @@ export class ProtocolSocks5 extends ProtocolBase {
             },
         )
             .then((res) => !!res)
-            .catch(() => false);
+            .catch((e) => {
+                logger.error(ErrorLevel.debugDetail, target, this, 'Failed to do idle verify', e);
+                return false;
+            });
     }
 }

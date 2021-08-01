@@ -399,7 +399,7 @@ export class ProtocolHttp extends ProtocolBase {
             : new HttpsProxyAgent({ port: target.port, host: target.ip });
         return await nFetch(
             `${this.isConnect ? 'https' : 'http'}://${this.addr}${
-                [80, 443].includes(this.port) ? '' : this.port
+                [80, 443].includes(this.port) ? '' : ':' + this.port
             }`,
             {
                 method: 'GET',
@@ -409,6 +409,9 @@ export class ProtocolHttp extends ProtocolBase {
             },
         )
             .then((res) => !!res)
-            .catch(() => false);
+            .catch((e) => {
+                logger.error(ErrorLevel.debugDetail, target, this, 'Failed to do idle verify', e);
+                return false;
+            });
     }
 }
