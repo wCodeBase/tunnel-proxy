@@ -66,7 +66,7 @@ const parseResponseHeader = (data: Buffer) => {
         const [version, code, status] = firstLine.split(' ');
         const header = lines.reduce((res, line) => {
             const [k, v] = line.split(':');
-            res[k] = v.trim();
+            res[k.toLowerCase()] = v.trim();
             return res;
         }, {} as { [k: string]: string });
         return { version, code, status, header, contentStart: headerEnd + PACKAGE_TAIL.length };
@@ -104,7 +104,16 @@ export class ProtocolHttp extends ProtocolBase {
         const destSock = this.connectFunc(targets, this);
         type RSockStatus = { dataLenRest?: number; toClose: boolean };
         const checkToForceDestory = () => {
-            if (Settings.forceSeperateHttpRequest) sock.destroy();
+            if (Settings.forceSeperateHttpRequest) {
+                logger.log(
+                    LogLevel.detail,
+                    targets[0].target,
+                    this,
+                    'forceSeperateHttpRequest',
+                    targets,
+                );
+                sock.destroy();
+            }
         };
         /**
          * ${isConnect === false} means this is a http (not https) proxy request, which may recieve requests for multi domain.
@@ -197,13 +206,13 @@ export class ProtocolHttp extends ProtocolBase {
                                 head,
                                 head?.header,
                             );
-                            const contentLen = head.header['Content-Length'];
+                            const contentLen = head.header['content-length'];
                             if (contentLen !== undefined) {
                                 status.dataLenRest = Number.parseInt(contentLen);
                                 status.dataLenRest =
                                     status.dataLenRest - (data.length - head.contentStart);
                             }
-                            if (head.header['Connection'] === 'close') {
+                            if (head.header['connection'] === 'close') {
                                 logger.log(
                                     LogLevel.detail,
                                     rsock.getCurrentTarget,
