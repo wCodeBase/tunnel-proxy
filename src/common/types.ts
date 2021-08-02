@@ -75,6 +75,8 @@ export abstract class ProtocolBase {
     /** Process the first package and judge is the correct protocol or not. */
     abstract process(data: Buffer): Promise<undefined | ProtocolBase>;
     abstract doFailFeedback(): Promise<void>;
+    /** Judge win data from raceConnect acceptable or not */
+    judgeWinDataAcceptable?: (datas: Buffer, target: Target) => boolean;
     abstract takeOver(targets: DomainChannelStats[]): void;
     /**
      * Called when logicConnect connect to a socket.
@@ -92,6 +94,7 @@ export abstract class ProtocolBase {
      * If data need addon process, rewrite this method.
      */
     writeToTargetSock(data: Buffer, targetSock: Socket, target: Target) {
+        // eslint-disable-line @typescript-eslint/no-unused-vars
         targetSock.write(data);
     }
     /**

@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { Settings, ErrorLevel, Target, LogLevel } from './setting';
 import { ProtocolBase } from './types';
 import { cyan } from 'colors';
@@ -57,7 +59,7 @@ export const logger = {
         target?: Target | (() => Target),
         protocolOrTraceId?: ProtocolBase | string,
         getLogData?: (() => any[]) | any,
-        ...args: any[]
+        ...args: any[] // eslint-disable-line @typescript-eslint/no-unused-vars
     ) {
         let protocol = undefined;
         let traceId = undefined;

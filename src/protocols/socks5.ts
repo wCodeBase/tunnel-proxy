@@ -2,13 +2,13 @@
  * Protocol processor for Socks5
  */
 
-import { ProtocolBase, ErrorProtocolProcessing, DomainChannelStats } from './../common/types';
-import { writeSocketForAck } from './../common/util';
-import { Socket } from 'net';
 import { chunk } from 'lodash';
-import { ErrorLevel, Settings, Target } from '../common/setting';
+import { Socket } from 'net';
 import nFetch from 'node-fetch';
 import { logger } from '../common/logger';
+import { ErrorLevel, Target } from '../common/setting';
+import { DomainChannelStats, ErrorProtocolProcessing, ProtocolBase } from './../common/types';
+import { writeSocketForAck } from './../common/util';
 
 const NO_AUTH_ACK = Buffer.from([5, 0]);
 const NO_AUTH_REQ = Buffer.from([5, 1, 0]);

@@ -1,18 +1,19 @@
-import { isDev } from './../common/setting';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { Socket } from 'net';
+import nFetch from 'node-fetch';
+import { ErrorLevel, LogLevel, Settings, Target } from '../common/setting';
+import { getTargets } from '../stats/channelDiagnostic';
 import { logger } from './../common/logger';
-
+import {
+    DomainChannelStats,
+    ErrorProtocolProcessing,
+    LogicSocket,
+    ProtocolBase,
+} from './../common/types';
 /***
  * Protocol processor for http and https.
  **/
-
-import { writeSocketForAck } from './../common/util';
-import nFetch from 'node-fetch';
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import { ErrorProtocolProcessing, LogicSocket } from './../common/types';
-import { ProtocolBase, DomainChannelStats } from './../common/types';
-import { getTargets } from '../stats/channelDiagnostic';
-import { ErrorLevel, LogLevel, Settings, Target } from '../common/setting';
-import { Socket } from 'net';
+import { safeCloseSocket, writeSocketForAck } from './../common/util';
 
 const CODE_CONNECT = 'CONNECT';
 const MAX_HTTP_METHOD_LENGTH = 10;
@@ -63,13 +64,19 @@ const parseResponseHeader = (data: Buffer) => {
             .filter((v) => v);
         const firstLine = lines.shift();
         if (!firstLine) return undefined;
-        const [version, code, status] = firstLine.split(' ');
+        const [version, code, ...status] = firstLine.split(' ');
         const header = lines.reduce((res, line) => {
             const [k, v] = line.split(':');
             res[k.toLowerCase()] = v.trim();
             return res;
         }, {} as { [k: string]: string });
-        return { version, code, status, header, contentStart: headerEnd + PACKAGE_TAIL.length };
+        return {
+            version,
+            code,
+            status: status.join(' '),
+            header,
+            contentStart: headerEnd + PACKAGE_TAIL.length,
+        };
     }
 };
 
@@ -96,6 +103,17 @@ export class ProtocolHttp extends ProtocolBase {
     async doConnectedFeedback() {
         this.sock.write(CONNECTED_FEEDBACK);
     }
+    judgeWinDataAcceptable = (data: Buffer, target: Target) => {
+        if (!data.slice(0, HTTP_RESPONSE_HEAD_CHARS.length).equals(HTTP_RESPONSE_HEAD_CHARS))
+            return true;
+        const lineEnd = data.indexOf(LINE_END);
+        if (lineEnd > 1000) return true;
+        logger.log(LogLevel.detail, target, this, () => [
+            'judgeWinDataAcceptable',
+            !String(data.slice(0, lineEnd)).includes('502'),
+        ]);
+        return !String(data.slice(0, lineEnd)).includes('502');
+    };
     takeOver(targets: DomainChannelStats[]) {
         let recvDataCount = 0;
         let backDataCount = 0;
@@ -103,7 +121,7 @@ export class ProtocolHttp extends ProtocolBase {
         const dAndP = this.addr + ':' + this.port;
         const destSock = this.connectFunc(targets, this);
         type RSockStatus = { dataLenRest?: number; toClose: boolean };
-        const checkToForceDestory = () => {
+        const checkToForceDestroy = () => {
             if (Settings.forceSeperateHttpRequest) {
                 logger.log(
                     LogLevel.detail,
@@ -112,7 +130,7 @@ export class ProtocolHttp extends ProtocolBase {
                     'forceSeperateHttpRequest',
                     targets,
                 );
-                sock.destroy();
+                safeCloseSocket(sock);
             }
         };
         /**
@@ -122,9 +140,9 @@ export class ProtocolHttp extends ProtocolBase {
          */
         const restDestSockMap = isConnect ? null : new Map([[dAndP, destSock]]);
         const genDestEnd = (dAndP: string, rsock: LogicSocket, isError = false) => (err?: any) => {
-            const destory = () => {
+            const destroy = () => {
                 if (isError) sock.write(CONNECT_FAILED_FEEDBACK);
-                sock.destroy();
+                safeCloseSocket(sock);
                 if (isError)
                     logger.error(
                         ErrorLevel.warn,
@@ -146,12 +164,12 @@ export class ProtocolHttp extends ProtocolBase {
                         targets,
                     );
             };
-            if (!restDestSockMap) destory();
+            if (!restDestSockMap) destroy();
             else {
                 restDestSockMap.get(dAndP)?.destroy();
                 restDestSockMap.delete(dAndP);
-                if (!restDestSockMap.size) destory();
-                else checkToForceDestory();
+                if (!restDestSockMap.size) destroy();
+                else checkToForceDestroy();
             }
         };
         const genEnd = (isError: boolean) => (err?: any) => {
@@ -251,7 +269,7 @@ export class ProtocolHttp extends ProtocolBase {
                             rsock.destroy();
                             restDestSockMap?.delete(dAndP);
                         }
-                        checkToForceDestory();
+                        checkToForceDestroy();
                         status = null;
                         if (lastDAndP) {
                             logger.error(

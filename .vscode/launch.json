@@ -7,6 +7,20 @@
         {
             "type": "node",
             "request": "launch",
+            "name": "Launch node",
+            "program": "${workspaceFolder}/dist/main.js",
+            "preLaunchTask": "npm: build",
+            "args": [
+                "-c",
+                "config.js"
+            ],
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
             "name": "ts-node",
             "skipFiles": [
                 "<node_internals>/**"

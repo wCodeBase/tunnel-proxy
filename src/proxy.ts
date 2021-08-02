@@ -6,12 +6,13 @@ import { DomainChannelStats, ProtocolBase } from './common/types';
 import { getTargets, tryRestoreCache, trySaveCache } from './stats/channelDiagnostic';
 import net from 'net';
 import { ErrorLevel, LogLevel, Settings, isDev } from './common/setting';
+import { safeCloseSocket } from './common/util';
 
 async function sockConnect(targets: DomainChannelStats[], protocol: ProtocolBase) {
     if (!targets.length) {
         logger.error(ErrorLevel.dangerous, undefined, protocol, 'Not target passed to sockConnect');
         await protocol.doFailFeedback();
-        protocol.sock.destroy();
+        safeCloseSocket(protocol.sock);
         return;
     }
     protocol.takeOver(targets);
