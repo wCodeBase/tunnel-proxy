@@ -105,10 +105,39 @@ export const realTimeout = (() => {
 
 export const getIpAddressList = () => {
     let ipList: string[] = [];
-    Object.entries(networkInterfaces()).forEach(([dev, info]) => {
+    Object.entries(networkInterfaces()).forEach(([, info]) => {
         if (info) ipList = ipList.concat(info.map((v) => v.address));
     });
     return ipList;
+};
+
+const ipv4ToByteStr = (ipv4: string) => {
+    const numStrs = ipv4.split('.');
+    let res = '';
+    for (const str of numStrs) {
+        const num = Number.parseInt(str);
+        if (isNaN(num)) return '';
+        res += num.toString(2).padStart(8, '0');
+    }
+    return res;
+};
+
+export const getIpv4LanIpVerifier = () => {
+    const maskedIpByteList: string[] = [];
+    Object.entries(networkInterfaces()).forEach(([, info]) => {
+        info?.forEach((v) => {
+            if (v.family === 'IPv4') {
+                const length = ipv4ToByteStr(v.netmask).indexOf('0');
+                if (length <= 0) return;
+                maskedIpByteList.push(ipv4ToByteStr(v.address).slice(0, length));
+            }
+        });
+    });
+    return (ip: string) => {
+        const ipBytes = ipv4ToByteStr(ip);
+        if (!ipBytes) return false;
+        return !!maskedIpByteList.find((v) => ipBytes.slice(0, v.length) === v);
+    };
 };
 
 export const batchFilter = async <T>(
@@ -144,3 +173,15 @@ export const writeSocketForAck = (sock: Socket, data: Buffer, timeout = 2000) =>
             rej('writeSocketForAck timeout');
         }, timeout);
     });
+
+export const safeCloseSocket = (sock?: Socket, timeout = 20000) => {
+    if (sock && !sock.destroyed) {
+        const tHandle = setTimeout(() => {
+            sock.destroy();
+        }, timeout);
+        sock.once('close', () => {
+            clearTimeout(tHandle);
+        });
+        sock.end();
+    }
+};

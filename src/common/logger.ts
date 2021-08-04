@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { Settings, ErrorLevel, Target, LogLevel } from './setting';
 import { ProtocolBase } from './types';
 import { cyan } from 'colors';
@@ -26,6 +28,7 @@ export const logger = {
         level: ErrorLevel,
         target?: Target | (() => Target),
         protocolOrTraceId?: ProtocolBase | string,
+        getLogData?: (() => any[]) | any,
         ...args: any[]
     ) {
         let protocol = undefined;
@@ -39,6 +42,7 @@ export const logger = {
             level <= Settings.errorLevel &&
             Settings.errorFilter(getTarget(target), protocol)
         ) {
+            if (typeof getLogData === 'function') args = [...getLogData(), ...args];
             target = getTarget(target);
             console.error(
                 `${getLoggerTimeSegment()}Error occurred(${ErrorLevel[level]}) ${
@@ -54,7 +58,8 @@ export const logger = {
         level: LogLevel,
         target?: Target | (() => Target),
         protocolOrTraceId?: ProtocolBase | string,
-        ...args: any[]
+        getLogData?: (() => any[]) | any,
+        ...args: any[] // eslint-disable-line @typescript-eslint/no-unused-vars
     ) {
         let protocol = undefined;
         let traceId = undefined;
@@ -67,6 +72,8 @@ export const logger = {
             level <= Settings.logLevel &&
             Settings.logFilter(getTarget(target), protocol)
         ) {
+            if (typeof getLogData === 'function') args = [...getLogData(), ...args];
+            else args.unshift(getLogData);
             target = getTarget(target);
             console.log(
                 `${getLoggerTimeSegment()}Log(${LogLevel[level]}) ${protocol?.protocol || ''} ${

@@ -11,6 +11,7 @@ import {
     SocketTargetPair,
     LogicSocket,
 } from './types';
+import { safeCloseSocket } from './util';
 
 /**
  * 通过比较第一个包的响应时间选取最快的路线
@@ -146,6 +147,13 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
                 const mCache = raceRecvDataMap.get(sock);
                 if (mCache) {
                     mCache.push(data);
+                    return;
+                }
+                if (
+                    protocol.judgeWinDataAcceptable &&
+                    !protocol.judgeWinDataAcceptable(data, target)
+                ) {
+                    fail(new ErrorRaceFail('judgeWinDataAcceptable failed'));
                     return;
                 }
                 const now = Date.now();
@@ -298,9 +306,9 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
             }
         },
         destroy() {
-            logger.log(LogLevel.detail, undefined, protocol, 'RaceConnect Destory called', targets);
+            logger.log(LogLevel.detail, undefined, protocol, 'RaceConnect Destroy called', targets);
             finished = true;
-            msockPair?.sock?.destroy();
+            safeCloseSocket(msockPair?.sock);
             socks.forEach((s) => s?.destroy());
         },
         on: (ev: string | number, cb: (...args: any) => void) => {

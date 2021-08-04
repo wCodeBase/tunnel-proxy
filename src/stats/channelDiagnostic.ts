@@ -9,6 +9,7 @@ import { CacheData, DomainChannelStats, DomainStatDesc } from '../common/types';
 import {
     batchFilter,
     getIpAddressList,
+    getIpv4LanIpVerifier,
     parseDomain,
     realTimeout,
     runWithTimeout,
@@ -34,6 +35,7 @@ export const notExactlyGoodStats = (() => {
             return notGoodDomainMap.get(domain) || 0;
         },
         feedback(notGood: boolean, domain: string) {
+            if (isLanIpv4(domain)) return;
             if (!notGood && !notGoodDomainMap.has(domain)) return;
             let stats = notGoodDomainMap.get(domain) || 0;
             if (notGood) stats++;
@@ -379,6 +381,8 @@ const verifyTtl = async (
     return res;
 };
 
+export let isLanIpv4 = getIpv4LanIpVerifier();
+
 // TODO: find better way to refresh
 (() => {
     const waitMilli = 30000;
@@ -436,6 +440,7 @@ const verifyTtl = async (
                 logger.log(LogLevel.notice, undefined, undefined, 'System Ip list change');
                 notExactlyGoodStats.clear();
                 cycleRefreshTtl(true, true);
+                isLanIpv4 = getIpv4LanIpVerifier();
             }
         }
         lastIpList = ipList;

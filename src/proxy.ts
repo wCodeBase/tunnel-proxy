@@ -6,12 +6,13 @@ import { DomainChannelStats, ProtocolBase } from './common/types';
 import { getTargets, tryRestoreCache, trySaveCache } from './stats/channelDiagnostic';
 import net from 'net';
 import { ErrorLevel, LogLevel, Settings, isDev } from './common/setting';
+import { safeCloseSocket } from './common/util';
 
 async function sockConnect(targets: DomainChannelStats[], protocol: ProtocolBase) {
     if (!targets.length) {
         logger.error(ErrorLevel.dangerous, undefined, protocol, 'Not target passed to sockConnect');
         await protocol.doFailFeedback();
-        protocol.sock.destroy();
+        safeCloseSocket(protocol.sock);
         return;
     }
     protocol.takeOver(targets);
@@ -27,14 +28,7 @@ export function startProxy(): void {
         const traceId = logger.doseLog() ? `${traceIdCount++}--${Date.now()}` : '';
         const strIpHost = `${sock.remoteAddress}:${sock.remotePort}`;
         if (sockIpHostSet.has(strIpHost)) {
-            logger.error(
-                ErrorLevel.dangerous,
-                undefined,
-                traceId,
-                'Origin socket rejected becouse ip-port pair exist',
-            );
-            sock.destroy();
-            return;
+            logger.error(ErrorLevel.dangerous, undefined, traceId, 'Client ip-port pair exist');
         }
         sockIpHostSet.add(strIpHost);
         sock.on('end', () => {

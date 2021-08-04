@@ -60,9 +60,9 @@ export const Settings = {
     timeoutUnit: 500,
     useIpv6: false,
     errorLevel: isDev ? ErrorLevel.warn : ErrorLevel.off,
-    errorFilter: (target?: Target, protocol?: ProtocolBase) => true,
+    errorFilter: (target?: Target, protocol?: ProtocolBase) => true, // eslint-disable-line @typescript-eslint/no-unused-vars
     logLevel: isDev ? LogLevel.important : LogLevel.off,
-    logFilter: (target?: Target, protocol?: ProtocolBase) => true,
+    logFilter: (target?: Target, protocol?: ProtocolBase) => true, // eslint-disable-line @typescript-eslint/no-unused-vars
     loggerTime: true,
     loggerFoldToLenLimit: 80,
     loggerInfoStringify: false,

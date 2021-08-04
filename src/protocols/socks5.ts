@@ -2,12 +2,13 @@
  * Protocol processor for Socks5
  */
 
-import { ProtocolBase, ErrorProtocolProcessing, DomainChannelStats } from './../common/types';
-import { writeSocketForAck } from './../common/util';
-import { Socket } from 'net';
 import { chunk } from 'lodash';
-import { Settings, Target } from '../common/setting';
+import { Socket } from 'net';
 import nFetch from 'node-fetch';
+import { logger } from '../common/logger';
+import { ErrorLevel, Target } from '../common/setting';
+import { DomainChannelStats, ErrorProtocolProcessing, ProtocolBase } from './../common/types';
+import { writeSocketForAck } from './../common/util';
 
 const NO_AUTH_ACK = Buffer.from([5, 0]);
 const NO_AUTH_REQ = Buffer.from([5, 1, 0]);
@@ -111,7 +112,7 @@ export class ProtocolSocks5 extends ProtocolBase {
         if (!target.notProxy) return true;
         return await nFetch(
             `${this.port === 443 ? 'https' : 'http'}://${this.addr}${
-                [80, 443].includes(this.port) ? '' : this.port
+                [80, 443].includes(this.port) ? '' : ':' + this.port
             }`,
             {
                 method: 'GET',
@@ -120,6 +121,9 @@ export class ProtocolSocks5 extends ProtocolBase {
             },
         )
             .then((res) => !!res)
-            .catch(() => false);
+            .catch((e) => {
+                logger.error(ErrorLevel.debugDetail, target, this, 'Failed to do idle verify', e);
+                return false;
+            });
     }
 }
