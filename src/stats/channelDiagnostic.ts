@@ -10,8 +10,10 @@ import {
     batchFilter,
     getIpAddressList,
     getIpv4LanIpVerifier,
+    isInternetAvailable,
     parseDomain,
     realTimeout,
+    refreshInternetAvailable,
     runWithTimeout,
     unZipipData,
     zipData,
@@ -157,6 +159,7 @@ export const diagnoseDomain = async (
     forceSync = false,
     ignoreCount = false,
 ) => {
+    if (!(await isInternetAvailable())) return [];
     const dAndP = `${domain}:${port}`;
     if (!ignoreCount) {
         const desc = domainStatDescMap.get(dAndP) || { dAndP, count: 0 };
@@ -437,6 +440,7 @@ export let isLanIpv4 = getIpv4LanIpVerifier();
         const ipList = getIpAddressList();
         if (lastIpList) {
             if (JSON.stringify(lastIpList) !== JSON.stringify(ipList)) {
+                refreshInternetAvailable();
                 logger.log(LogLevel.notice, undefined, undefined, 'System Ip list change');
                 notExactlyGoodStats.clear();
                 cycleRefreshTtl(true, true);

@@ -43,6 +43,7 @@ export const logger = {
             Settings.errorFilter(getTarget(target), protocol)
         ) {
             if (typeof getLogData === 'function') args = [...getLogData(), ...args];
+            else args = [getLogData, ...args];
             target = getTarget(target);
             console.error(
                 `${getLoggerTimeSegment()}Error occurred(${ErrorLevel[level]}) ${
@@ -50,7 +51,7 @@ export const logger = {
                 } ${protocol?.addr || ''} (${traceId}):`,
             );
             if (target) console.error('target:', target);
-            console.error(...stringify(args));
+            stringify(args).forEach((v) => console.error(v));
             console.error('\n');
         }
     },
@@ -81,7 +82,7 @@ export const logger = {
                 } (${traceId}):`,
             );
             if (target) console.error('target:', target);
-            console.log(...stringify(args));
+            stringify(args).forEach((v) => console.log(v));
             console.log('\n');
         }
     },

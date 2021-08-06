@@ -23,17 +23,45 @@ export function startProxy(): void {
     let traceIdCount = 0;
 
     const sockIpHostSet = new Set<string>();
-
+    let socketCount = 0;
     const server = new net.Server((sock) => {
         const traceId = logger.doseLog() ? `${traceIdCount++}--${Date.now()}` : '';
+        logger.log(LogLevel.noisyDetail, undefined, traceId, 'socket count', socketCount++);
         const strIpHost = `${sock.remoteAddress}:${sock.remotePort}`;
         if (sockIpHostSet.has(strIpHost)) {
             logger.error(ErrorLevel.dangerous, undefined, traceId, 'Client ip-port pair exist');
         }
         sockIpHostSet.add(strIpHost);
+        let destroyed = false;
         sock.on('end', () => {
-            sockIpHostSet.delete(strIpHost);
+            if (!destroyed) {
+                destroyed = true;
+                logger.log(
+                    LogLevel.noisyDetail,
+                    undefined,
+                    traceId,
+                    'socket end, current count',
+                    --socketCount,
+                );
+                sockIpHostSet.delete(strIpHost);
+            }
         });
+        const destroy = sock.destroy.bind(sock);
+        sock.destroy = (...args: any) => {
+            // eslint-disable-line @typescript-eslint/no-explicit-any
+            if (!destroyed) {
+                destroyed = true;
+                logger.log(
+                    LogLevel.noisyDetail,
+                    undefined,
+                    traceId,
+                    'socket destoried',
+                    --socketCount,
+                );
+                sockIpHostSet.delete(strIpHost);
+                destroy(...args);
+            }
+        };
         sock.once('data', async (data: Buffer) => {
             logger.log(LogLevel.noisyDetail, undefined, traceId, 'On origin data.', data);
             let protocol: ProtocolBase | undefined;

@@ -3,6 +3,7 @@ import { deflate, unzip } from 'zlib';
 import { ErrorLevel, Settings } from './setting';
 import { networkInterfaces } from 'os';
 import { Socket } from 'net';
+import { resolve4 } from 'dns';
 
 const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
 export function genRandomString(length: number) {
@@ -185,3 +186,47 @@ export const safeCloseSocket = (sock?: Socket, timeout = 20000) => {
         sock.end();
     }
 };
+
+export const testInternetAvailable = async (
+    timeout = Settings.testInternetTimeout,
+    testDomain = 'www.google.com',
+) => {
+    return await new Promise<boolean>((resolve) => {
+        const tHandle = setTimeout(() => {
+            resolve(false);
+        }, timeout);
+        resolve4(testDomain, (err) => {
+            if (err) resolve(false);
+            else resolve(true);
+            clearTimeout(tHandle);
+        });
+    });
+};
+
+export const { isInternetAvailable, refreshInternetAvailable } = (() => {
+    let available: undefined | boolean;
+    let resolves: undefined | (() => void)[];
+    const refreshInternetAvailable = async () => {
+        const lastAvailable = available;
+        if (available === undefined) {
+            realTimeout.setInterval(refreshInternetAvailable, 10000);
+        }
+        available = await testInternetAvailable();
+        if (lastAvailable && !available) {
+            logger.logVital('Warning: internet is not available.');
+        }
+    };
+    return {
+        refreshInternetAvailable,
+        isInternetAvailable: async () => {
+            if (resolves) await new Promise<void>((res) => resolves?.push(res));
+            if (available === undefined) {
+                resolves = [];
+                await refreshInternetAvailable();
+                resolves.forEach((res) => res());
+                resolves = undefined;
+            }
+            return available;
+        },
+    };
+})();

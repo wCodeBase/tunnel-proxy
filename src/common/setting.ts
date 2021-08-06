@@ -66,6 +66,7 @@ export const Settings = {
     loggerTime: true,
     loggerFoldToLenLimit: 80,
     loggerInfoStringify: false,
+    testInternetTimeout: 1000,
 };
 
 export const overrideSetting = (settings: Partial<typeof Settings>) => {

@@ -1,6 +1,6 @@
 {
   "name": "tunnel-proxy",
-  "version": "0.0.25",
+  "version": "0.0.26-dev.3",
   "description": "A simple HTTP proxy and smart proxy relay",
   "main": "main.js",
   "bin": {
@@ -10,7 +10,7 @@
     "eslint": "eslint --ext .js,.ts --format codeframe ./",
     "build": "tsc",
     "dist": "node ./release.js",
-    "release": "node ./release.js"
+    "release": "npm run build && node ./release.js"
   },
   "keywords": [
     "http",

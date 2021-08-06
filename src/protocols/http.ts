@@ -139,9 +139,13 @@ export class ProtocolHttp extends ProtocolBase {
          * Use this map to store domain-sock mapping relations;
          */
         const restDestSockMap = isConnect ? null : new Map([[dAndP, destSock]]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const genDestEnd = (dAndP: string, rsock: LogicSocket, isError = false) => (err?: any) => {
             const destroy = () => {
-                if (isError) sock.write(CONNECT_FAILED_FEEDBACK);
+                if (isError) {
+                    sock.write(CONNECT_FAILED_FEEDBACK);
+                    rsock.destroy();
+                }
                 safeCloseSocket(sock);
                 if (isError)
                     logger.error(
@@ -172,8 +176,9 @@ export class ProtocolHttp extends ProtocolBase {
                 else checkToForceDestroy();
             }
         };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const genEnd = (isError: boolean) => (err?: any) => {
-            if (isError)
+            if (isError) {
                 logger.error(
                     ErrorLevel.warn,
                     undefined,
@@ -183,7 +188,8 @@ export class ProtocolHttp extends ProtocolBase {
                     backDataCount,
                     targets,
                 );
-            else
+                safeCloseSocket(sock);
+            } else
                 logger.log(
                     LogLevel.detail,
                     undefined,
@@ -197,9 +203,7 @@ export class ProtocolHttp extends ProtocolBase {
         };
         const genOnDataBack = (rsock: LogicSocket, dAndP: string) => {
             let status: RSockStatus | null = null;
-            const dataCache: Buffer[] = [];
             return (data: Buffer) => {
-                dataCache.push(data);
                 recvDataCount++;
                 if (isConnect || !lastDAndP || dAndP === lastDAndP) sock.write(data);
                 if (lastDAndP && lastDAndP !== dAndP)

@@ -80,7 +80,7 @@ export class ProtocolSocks5 extends ProtocolBase {
         const destSock = this.connectFunc(targets, this);
         destSock.on('data', (data) => this.sock.write(data));
         destSock.on('end', () => this.sock.destroy());
-        destSock.on('error', (err) => {
+        destSock.on('error', () => {
             this.sock.destroy();
         });
         destSock.on('connect', () => this.doConnectedFeedback());
@@ -88,7 +88,7 @@ export class ProtocolSocks5 extends ProtocolBase {
             destSock.write(data);
         });
         this.sock.on('end', destSock.destroy);
-        this.sock.on('error', (err) => {
+        this.sock.on('error', () => {
             destSock.destroy();
         });
     }
