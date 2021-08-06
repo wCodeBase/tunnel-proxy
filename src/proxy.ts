@@ -46,6 +46,9 @@ export function startProxy(): void {
                 sockIpHostSet.delete(strIpHost);
             }
         });
+        sock.on('error', () => {
+            safeCloseSocket(sock);
+        });
         const destroy = sock.destroy.bind(sock);
         sock.destroy = (...args: any) => {
             // eslint-disable-line @typescript-eslint/no-explicit-any
