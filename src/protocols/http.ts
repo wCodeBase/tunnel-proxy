@@ -25,6 +25,7 @@ const CONNECTED_FEEDBACK = Buffer.from('HTTP/1.1 200 Connection Established\r\n\
 const CONNECTION_ESTABLISHED = Buffer.from('Connection Established');
 const CONNECT_FAILED_FEEDBACK = Buffer.from('HTTP/1.1 502 Bad Gateway\r\n\r\n');
 const HTTP_RESPONSE_HEAD_CHARS = Buffer.from('HTTP/');
+const HTTP_LOWER_CASE = 'http';
 
 function parseHttpFirstLine(data: Buffer) {
     const start = data.indexOf(CODE_SPACE);
@@ -84,7 +85,7 @@ export class ProtocolHttp extends ProtocolBase {
     method = '';
     version = '';
     isConnect = false;
-    protocol = 'http'; // Or https, depends on result of "parseAddrAndPort".
+    protocol = 'http'; // Or https.
     recvDatas: Buffer[] = [];
     dAndPHistory: string[] = [];
     async process(data: Buffer): Promise<undefined | ProtocolHttp> {
@@ -92,6 +93,7 @@ export class ProtocolHttp extends ProtocolBase {
         if (!domainAndPort) return undefined;
         Object.assign(this, domainAndPort);
         this.isConnect = this.method.toUpperCase() === CODE_CONNECT;
+        // If it's a connect packet, this connection is probably https.
         if (!this.protocol) this.protocol = this.isConnect ? 'https' : 'http';
         if (this.isConnect) this.minCountShouldIdleTimeoutRecv = 1;
         this.recvDatas.push(data);
@@ -303,8 +305,21 @@ export class ProtocolHttp extends ProtocolBase {
         let lastDAndP = this.recvDatas[0].slice(-PACKAGE_TAIL.length).includes(PACKAGE_TAIL)
             ? ''
             : dAndP;
+        let firstPacketJudged = false;
         sock.on('data', async (data) => {
             logger.log(LogLevel.noisyDetail, undefined, this, 'Receive data from client', data);
+            if (this.isConnect && !firstPacketJudged) {
+                firstPacketJudged = true;
+                // Judge http or https by first packet.
+                const info = parseHttpFirstLine(data);
+                if (info) {
+                    if (
+                        info.version.slice(0, HTTP_LOWER_CASE.length).toLowerCase() ===
+                        HTTP_LOWER_CASE
+                    )
+                        this.protocol = HTTP_LOWER_CASE;
+                }
+            }
             if (isConnect)
                 logger.log(
                     LogLevel.noisyDetail,
@@ -429,7 +444,7 @@ export class ProtocolHttp extends ProtocolBase {
             ? undefined
             : new HttpsProxyAgent({ port: target.port, host: target.ip });
         return await nFetch(
-            `${this.isConnect ? 'https' : 'http'}://${this.addr}${
+            `${this.protocol}://${this.addr}${
                 [80, 443].includes(this.port) ? '' : ':' + this.port
             }`,
             {
