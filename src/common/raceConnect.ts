@@ -1,7 +1,7 @@
 import { logger } from './logger';
 
 import net, { Socket } from 'net';
-import { notExactlyGoodStats } from '../stats/channelDiagnostic';
+import { notExactlyGoodStats, onTargetWin } from '../stats/channelDiagnostic';
 import { Settings, ErrorLevel, LogLevel } from './setting';
 import {
     DomainChannelStats,
@@ -66,7 +66,9 @@ export const raceConnect: LogicConnect = (targets, protocol) => {
                 'Race win and send cached datas to client',
             );
             raceRecvDataMap.get(msockPair.sock)?.forEach((d) => cbMap['data']?.(d));
-            // raceRecvDataMap.clear();
+            // raceRecvDataMap.clear(); raceRecvDataMap may useful for target switching?
+
+            onTargetWin(protocol, msockPair.target);
         }
         if (win) winCb?.();
         return win;

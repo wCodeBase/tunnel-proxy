@@ -67,6 +67,7 @@ export const Settings = {
     loggerFoldToLenLimit: 80,
     loggerInfoStringify: false,
     testInternetTimeout: 1000,
+    lastWinBaseDomainTtl: 30000,
 };
 
 export const overrideSetting = (settings: Partial<typeof Settings>) => {

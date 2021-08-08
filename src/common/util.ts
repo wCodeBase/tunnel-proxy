@@ -4,6 +4,7 @@ import { ErrorLevel, Settings } from './setting';
 import { networkInterfaces } from 'os';
 import { Socket } from 'net';
 import { resolve4 } from 'dns';
+import { parseDomain, ParseResultType } from 'parse-domain';
 
 const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
 export function genRandomString(length: number) {
@@ -16,12 +17,20 @@ export function genRandomString(length: number) {
  * Parse a `domain:port` string.
  * If there is no `:port` part in given string, the port returned will be 80;
  */
-export function parseDomain(domain: string) {
+export function parseDomainAndPort(domain: string) {
     const domainAndPort = domain.split(':');
     return {
         domain: domainAndPort[0],
         port: domainAndPort.length > 1 ? Number(domainAndPort[1]) : 80,
     };
+}
+
+export function getBaseDomain(domainStr: string) {
+    const domain = parseDomain(domainStr);
+    if (domain.type === ParseResultType.Ip) return domain.hostname;
+    else if (domain.type === ParseResultType.Listed)
+        return [domain.domain, ...domain.topLevelDomains].join('.');
+    else return domainStr;
 }
 
 export function zipData(data: Buffer): Promise<Buffer> {
@@ -95,10 +104,13 @@ export const realTimeout = (() => {
     };
     deamonCb();
     return {
-        setTimeout: (cb: () => void, timeout: number) =>
-            cbPairs.push({ at: Date.now() + timeout, cb }),
+        setTimeout: (cb: () => void, timeout: number) => {
+            cbPairs.push({ at: Date.now() + timeout, cb });
+        },
         clearTimeout: (cb: () => void) => (cbPairs = cbPairs.filter((v) => v.cb !== cb)),
-        setInterval: (cb: () => void, interval: number) => intervalCbPairs.push({ interval, cb }),
+        setInterval: (cb: () => void, interval: number) => {
+            intervalCbPairs.push({ interval, cb });
+        },
         clearInterval: (cb: () => void) =>
             (intervalCbPairs = intervalCbPairs.filter((v) => v.cb !== cb)),
     };
@@ -208,10 +220,12 @@ export const { isInternetAvailable, refreshInternetAvailable } = (() => {
     let resolves: undefined | (() => void)[];
     const refreshInternetAvailable = async () => {
         const lastAvailable = available;
-        if (available === undefined) {
-            realTimeout.setInterval(refreshInternetAvailable, 10000);
-        }
         available = await testInternetAvailable();
+        if (lastAvailable !== available) {
+            realTimeout.clearInterval(refreshInternetAvailable);
+            realTimeout.setInterval(refreshInternetAvailable, available ? 10000 : 1000);
+        }
+        if (lastAvailable && !available) available = await testInternetAvailable();
         if (lastAvailable && !available) {
             logger.logVital('Warning: internet is not available.');
         }

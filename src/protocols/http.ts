@@ -142,42 +142,44 @@ export class ProtocolHttp extends ProtocolBase {
          */
         const restDestSockMap = isConnect ? null : new Map([[dAndP, destSock]]);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const genDestEnd = (dAndP: string, rsock: LogicSocket, isError = false) => (err?: any) => {
-            const destroy = () => {
-                if (isError) {
-                    sock.write(CONNECT_FAILED_FEEDBACK);
-                    rsock.destroy();
+        const genDestEnd =
+            (dAndP: string, rsock: LogicSocket, isError = false) =>
+            (err?: any) => {
+                const destroy = () => {
+                    if (isError) {
+                        sock.write(CONNECT_FAILED_FEEDBACK);
+                        rsock.destroy();
+                    }
+                    safeCloseSocket(sock);
+                    if (isError)
+                        logger.error(
+                            ErrorLevel.warn,
+                            rsock.getCurrentTarget,
+                            this,
+                            'Target sockets error',
+                            err,
+                            recvDataCount,
+                            targets,
+                        );
+                    else
+                        logger.log(
+                            LogLevel.detail,
+                            rsock.getCurrentTarget,
+                            this,
+                            'Target socks end',
+                            recvDataCount,
+                            backDataCount,
+                            targets,
+                        );
+                };
+                if (!restDestSockMap) destroy();
+                else {
+                    restDestSockMap.get(dAndP)?.destroy();
+                    restDestSockMap.delete(dAndP);
+                    if (!restDestSockMap.size) destroy();
+                    else checkToForceDestroy();
                 }
-                safeCloseSocket(sock);
-                if (isError)
-                    logger.error(
-                        ErrorLevel.warn,
-                        rsock.getCurrentTarget,
-                        this,
-                        'Target sockets error',
-                        err,
-                        recvDataCount,
-                        targets,
-                    );
-                else
-                    logger.log(
-                        LogLevel.detail,
-                        rsock.getCurrentTarget,
-                        this,
-                        'Target socks end',
-                        recvDataCount,
-                        backDataCount,
-                        targets,
-                    );
             };
-            if (!restDestSockMap) destroy();
-            else {
-                restDestSockMap.get(dAndP)?.destroy();
-                restDestSockMap.delete(dAndP);
-                if (!restDestSockMap.size) destroy();
-                else checkToForceDestroy();
-            }
-        };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const genEnd = (isError: boolean) => (err?: any) => {
             if (isError) {
@@ -378,7 +380,7 @@ export class ProtocolHttp extends ProtocolBase {
                         );
                         let sock = restDestSockMap.get(dAndP);
                         if (!sock) {
-                            const targets = await getTargets(this.addr, this.port);
+                            const targets = await getTargets(this.addr, this.port, this);
                             sock = this.connectFunc(targets, this);
                             restDestSockMap.set(dAndP, sock);
                             bindSock(sock, dAndP);

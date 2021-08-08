@@ -90,7 +90,7 @@ export function startProxy(): void {
                 return;
             }
             const { addr, port } = protocol;
-            const targets = await getTargets(addr, port);
+            const targets = await getTargets(addr, port, protocol);
             logger.log(LogLevel.detail, undefined, protocol, 'New request', targets);
             sockConnect(targets, protocol);
         });

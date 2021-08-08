@@ -1,17 +1,18 @@
 import { logger } from './../common/logger';
-import { ErrorLevel, getDomainProxy, LogLevel, Settings } from './../common/setting';
+import { ErrorLevel, getDomainProxy, LogLevel, Settings, Target } from './../common/setting';
 import net from 'net';
 import { RecordWithTtl, resolve4, resolve6 } from 'dns';
 import ping from 'ping';
 import path from 'path';
 import fs from 'fs';
-import { CacheData, DomainChannelStats, DomainStatDesc } from '../common/types';
+import { CacheData, DomainChannelStats, DomainStatDesc, ProtocolBase } from '../common/types';
 import {
     batchFilter,
+    getBaseDomain,
     getIpAddressList,
     getIpv4LanIpVerifier,
     isInternetAvailable,
-    parseDomain,
+    parseDomainAndPort,
     realTimeout,
     refreshInternetAvailable,
     runWithTimeout,
@@ -20,6 +21,7 @@ import {
 } from '../common/util';
 import { debounce } from 'lodash';
 import isOnline from 'is-online';
+import { parseDomain, ParseResultType } from 'parse-domain';
 
 /**
  * Map to store diagnostic infos.
@@ -37,6 +39,9 @@ export const notExactlyGoodStats = (() => {
             return notGoodDomainMap.get(domain) || 0;
         },
         feedback(notGood: boolean, domain: string) {
+            if (notGood) {
+                lastWinBaseDomainTargetMap.delete(getBaseDomain(domain));
+            }
             if (isLanIpv4(domain)) return;
             if (!notGood && !notGoodDomainMap.has(domain)) return;
             let stats = notGoodDomainMap.get(domain) || 0;
@@ -54,6 +59,23 @@ export const notExactlyGoodStats = (() => {
         },
     };
 })();
+
+const lastWinBaseDomainTargetMap = new Map<string, { target: Target; at: number }>();
+export const onTargetWin = (protocol: ProtocolBase, target: Target) => {
+    const baseDomain = getBaseDomain(protocol.addr);
+    if (baseDomain) {
+        lastWinBaseDomainTargetMap.set(baseDomain, { target, at: Date.now() });
+    }
+};
+const getFreshLaseWinTarget = (domain: string) => {
+    const baseDomain = getBaseDomain(domain);
+    let lastWin = lastWinBaseDomainTargetMap.get(baseDomain);
+    if (lastWin && lastWin.at < Date.now() - Settings.lastWinBaseDomainTtl) {
+        lastWinBaseDomainTargetMap.delete(baseDomain);
+        lastWin = undefined;
+    }
+    return lastWin;
+};
 
 /**
  * Map to count domain request times and last active time;
@@ -89,7 +111,7 @@ export const tryRestoreCache = async () => {
                         .filter((d) => !domainStatsMap.has(d.dAndP));
                     await Promise.all(
                         toPing.map((d) => {
-                            const dAndP = parseDomain(d.dAndP);
+                            const dAndP = parseDomainAndPort(d.dAndP);
                             return runWithTimeout(
                                 diagnoseDomain(dAndP.domain, dAndP.port, false, true, true),
                                 3000,
@@ -158,7 +180,8 @@ export const diagnoseDomain = async (
     rediagnose = false,
     forceSync = false,
     ignoreCount = false,
-) => {
+    protocol?: ProtocolBase,
+): Promise<DomainChannelStats[]> => {
     if (!(await isInternetAvailable())) return [];
     const dAndP = `${domain}:${port}`;
     if (!ignoreCount) {
@@ -250,6 +273,22 @@ export const diagnoseDomain = async (
     }
 
     domainStatsMap.set(dAndP, statsList);
+    const lastWin = getFreshLaseWinTarget(domain);
+    if (lastWin) {
+        let channels: DomainChannelStats[] | undefined;
+        if (lastWin.target.notProxy) channels = statsList.filter((v) => v.target.notProxy);
+        else channels = statsList.filter((v) => v.target === lastWin.target);
+        if (channels.length) {
+            statsList = channels;
+            logger.log(
+                LogLevel.detail,
+                undefined,
+                protocol,
+                'Reuse last win to filter channels',
+                channels,
+            );
+        }
+    }
     const notGoodCount = notExactlyGoodStats.countNotGood(domain);
     // pick stats
     if (statsList[0].status === 'good' && !notGoodCount) return [statsList[0]];
@@ -262,10 +301,10 @@ export const diagnoseDomain = async (
     return statsList;
 };
 
-export const getTargets = async (addr: string, port: number) => {
+export const getTargets = async (addr: string, port: number, protocol: ProtocolBase) => {
     const target = getDomainProxy(addr);
     if (target) return [new DomainChannelStats(addr, port, `${addr}:${port}`, target)];
-    return await diagnoseDomain(addr, port);
+    return await diagnoseDomain(addr, port, undefined, undefined, undefined, protocol);
 };
 
 // TODO:

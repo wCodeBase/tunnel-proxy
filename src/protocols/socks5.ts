@@ -15,14 +15,12 @@ const NO_AUTH_REQ = Buffer.from([5, 1, 0]);
 
 const parseAddrPort = (data: Buffer) => {
     let resData: Buffer, addr: string;
-    // TODO: important check ipv6 and ipv4 addr
     if (data[3] === 1) {
         addr = data.slice(4, 8).join('.');
         resData = data.slice(8);
     } else if (data[3] === 3) {
         const end = 5 + data[4];
         addr = String(data.slice(5, end));
-        // TODO: check chinese char.
         resData = data.slice(end);
     } else if (data[3] === 4) {
         addr = chunk(
